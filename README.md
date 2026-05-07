@@ -1,4 +1,3 @@
-```markdown
 # keinplankarriere
 
 > One command. Every application.
@@ -10,7 +9,7 @@ An autonomous CLI agent that scrapes job boards, ranks matches against your prof
 ---
 
 ## What it does
-
+```
 You run one command. The agent:
 
 1. **Scrapes** 3 job boards in parallel (Arbeitsagentur, LinkedIn, Indeed)
