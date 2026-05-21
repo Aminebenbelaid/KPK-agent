@@ -6,6 +6,11 @@
 
 ---
 
+## Screenshots
+
+![Screenshot 1](Screenshot1.png)
+![Screenshot 2](Screenshot2.png)
+
 ## What it does
 
 KeinplanKarriere scrapes job postings from four major German job platforms, stores them in a local database, and provides a web dashboard to search, filter, track, and manage applications. Everything runs in a single Docker container.
