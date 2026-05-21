@@ -1,175 +1,213 @@
-# keinplankarriere
+# KeinplanKarriere
 
-> One command. Every application.
+> Automated job scraping, tracking, and application management for the German job market.
 
-An autonomous CLI agent that scrapes job boards, ranks matches against your profile, and generates tailored CVs and cover letters — fully local, no cloud required.
-
-🌐 **[keinplankarriere.de](https://keinplankarriere.de)**
+**Live demo:** [http://localhost:8000](http://localhost:8000)
 
 ---
 
 ## What it does
-```
-You run one command. The agent:
 
-1. **Scrapes** 3 job boards in parallel (Arbeitsagentur, LinkedIn, Indeed)
-2. **Deduplicates** overlapping listings across sources
-3. **Extracts** required skills from each posting
-4. **Ranks** jobs against your candidate profile (skills, location, salary, company, recency)
-5. **Analyses** salary trends and skill demand across the dataset
-6. **Tracks** results and application status in a local database
-7. **Generates** a tailored CV and cover letter for each match
+KeinplanKarriere scrapes job postings from four major German job platforms, stores them in a local database, and provides a web dashboard to search, filter, track, and manage applications. Everything runs in a single Docker container.
 
-```bash
-kpk run --role "ML Engineer" --location Berlin --generate
+### Supported job boards
 
-  ● Scraping 3 sources in parallel...
-  ● Deduplicating & extracting skills...
-  ● Ranked 47 jobs → 12 matches (≥70%)
-
-  ✓ Generated 12 CVs + 12 cover letters
-  ✓ Tracked in local DB. Done in 34s.
-```
+| Platform | Method | Status |
+|----------|--------|--------|
+| **LinkedIn** | Guest search API (no login required) | Working |
+| **StepStone** | HTML scraping with BeautifulSoup | Working |
+| **Xing** | HTML scraping with BeautifulSoup | Working |
+| **Arbeitsagentur** | Official REST API (`jobboerse-jobsuche`) | Working |
+| **Indeed** | HTML scraping | Blocked (403) |
 
 ---
 
 ## Architecture
 
-The agent follows a **Plan & Execute** pattern. A central orchestrator drives a fixed 7-step pipeline. Each stage is independent — one failure never blocks the others.
-
 ```
-Interface        →   Orchestrator         →   Storage & External
-─────────────────    ─────────────────────    ──────────────────
-Command Line         Scrape                   SQLite (history)
-REST API (opt.)      Deduplicate              YAML Profile
-Web UI (opt.)        Extract                  Local filesystem
-                     Rank                     Ollama / OpenRouter
-                     Market                   KISSKI (academic API)
-                     Track                    Job Board APIs
-                     Generate
+                    Browser (port 8000)
+                         |
+              +----------+-----------+
+              |     FastAPI Server    |
+              |                      |
+              |  /api/*   REST API   |
+              |  /        Dashboard  |
+              |          (static)    |
+              +-----+----------+----+
+                    |          |
+            +-------+    +----+------+
+            | SQLite |    | Scrapers  |
+            | (data/ |    | (subprocess)
+            | tracker|    |           |
+            | .db)   |    | linkedin  |
+            +--------+    | stepstone |
+                          | xing      |
+                          | arbeits.  |
+                          +-----------+
 ```
 
-### Scraping strategy
+**Backend:** FastAPI + Uvicorn, pure Python scrapers (requests + BeautifulSoup), SQLite database
 
-Two approaches depending on the source:
+**Frontend:** React 18 + Vite 5, served as static files from the same container
 
-| Source | Method |
-|---|---|
-| Arbeitsagentur | Official public REST API — no auth required |
-| LinkedIn | Public guest API, Playwright fallback if blocked |
-| Indeed | Playwright browser automation (embeds data in JS) |
-
-### LLM integration
-
-The agent instructs the LLM to return a strict JSON structure for CV recomposition — not free text. This guarantees consistent output: ordered experience, scored relevance, rewritten bullet points.
-
-Supported providers: **Ollama** (local), **OpenRouter**, **KISSKI** (academic API).
+**Deployment:** Single Docker container, multi-stage build (Node for dashboard, Python for runtime)
 
 ---
 
-## Agentic components
+## Features
 
-| Component | Role |
-|---|---|
-| Tool Use | Each scraper is an independent tool with isolated failure handling |
-| Structured Output | LLM constrained to JSON schema — no freeform generation |
-| Memory | Persistent application tracker across sessions (Wishlist → Offer) |
-| Feedback | Outcome recording — foundation for prompt refinement in Sprint 4 |
+### Dashboard
+- **Job browser** with search, sort, and filter (by source, remote type, match score)
+- **Search panel** to trigger scraper runs with custom queries and location from the UI
+- **Application tracking** with status updates (new, applied, interview, offer, rejected)
+- **Settings page** for managing API keys and scraper configuration
+- **Light blue theme** matching [agent.keinplankarriere.de](https://agent.keinplankarriere.de)
 
----
-
-## Getting started
-
-### Prerequisites
-
-- Python 3.12+
-- [Playwright](https://playwright.dev/) browsers installed
-- One of: Ollama running locally, an OpenRouter API key, or a KISSKI API key
-
-### Installation
-
-```bash
-git clone https://github.com/your-username/keinplankarriere
-cd keinplankarriere
-pip install -e .
-playwright install chromium
-```
-
-### Configuration
-
-Copy the example profile and fill in your details:
-
-```bash
-cp config/profile.example.yaml config/profile.yaml
-```
-
-Set your LLM provider in `.env`:
-
-```env
-# Choose one
-OLLAMA_BASE_URL=http://localhost:11434
-OPENROUTER_API_KEY=your_key_here
-KISSKI_API_KEY=your_key_here
-```
-
-### Usage
-
-```bash
-# Scrape and rank jobs
-kpk run --role "Software Engineer" --location Berlin
-
-# Scrape, rank, and generate documents
-kpk run --role "ML Engineer" --location Munich --generate
-
-# Scout jobs without generating documents
-kpk scout --role "Data Scientist" --location Hamburg
-
-# Analyse your market fit
-kpk analyze
-```
+### Backend
+- **Parallel scraping** via ThreadPoolExecutor across all 4 platforms
+- **Background execution** with task polling (start scrape, poll status, auto-refresh)
+- **Search history** tracking all past scrape queries
+- **Internal API** with key-based auth for scraper-to-server job submission
+- **Settings stored in DB** (not .env) for runtime configuration
 
 ---
 
-## Sprint roadmap
+## Quick start
 
-| Sprint | Focus | Deliverable |
-|---|---|---|
-| 1 | Scraping & Search | Agent collects real job data |
-| 2 | Matching & Profile | Agent ranks jobs for you specifically |
-| 3 | Generation & Apply | Agent generates tailored documents |
-| 4 | Fine-tuning & Polish | Agent improves with each run |
+### Docker (recommended)
+
+```bash
+git clone https://github.com/your-username/KeinplanKarriere.git
+cd KeinplanKarriere
+
+# Start the container
+docker compose up -d --build
+
+# Open the dashboard
+open http://localhost:8000
+```
+
+### Local development
+
+```bash
+# Backend
+python -m venv venv
+source venv/bin/activate  # or venv\Scripts\activate on Windows
+pip install -r requirements.txt
+uvicorn src.main:app --reload --port 8000
+
+# Frontend (separate terminal)
+cd dashboard
+npm install
+npm run dev   # starts on port 3000, proxies /api to :8000
+```
 
 ---
 
 ## Project structure
 
 ```
-src/
-├── pipeline/        # Orchestrator — 7-step execution
-├── scrapers/        # Arbeitsagentur, LinkedIn, Indeed
-├── analyzer/        # Ranking, skill extraction, market analysis
-├── generator/       # CV and cover letter generation
-├── tracker/         # Application memory and status
-├── services/        # LLM client (Ollama / OpenRouter / KISSKI)
-└── cli/             # Command line interface
+KeinplanKarriere/
++-- src/                    # FastAPI backend
+|   +-- main.py             # App factory, static file serving
+|   +-- config.py           # pydantic-settings configuration
+|   +-- database.py         # SQLite connection helper
+|   +-- init_db.py          # Auto-creates tables on startup
+|   +-- api/
+|       +-- router.py       # Route registration
+|       +-- routes/
+|           +-- jobs.py         # GET /api/jobs, GET /api/jobs/:id
+|           +-- applications.py # PATCH /api/applications/:id, stats
+|           +-- internal.py     # POST /api/internal/jobs/batch, scrape endpoints
+|           +-- settings.py     # GET/PUT /api/settings
+|           +-- health.py       # GET /health
+|           +-- profile.py      # GET/PUT /api/profile
++-- scrapers/               # Job board scrapers
+|   +-- base.py             # Shared utilities, API submission
+|   +-- run_all.py          # CLI runner (--query, --location, --parallel)
+|   +-- linkedin_scraper.py
+|   +-- stepstone_scraper.py
+|   +-- xing_scraper.py
+|   +-- arbeitsagentur_scraper.py
+|   +-- indeed_scraper.py
++-- dashboard/              # React frontend
+|   +-- src/
+|       +-- App.jsx         # Main app (Jobs, Settings, Search panels)
+|       +-- App.css         # Light blue theme
+|       +-- api.js          # API client functions
++-- data/                   # SQLite DB + user profile (Docker volume)
++-- Dockerfile              # Multi-stage build
++-- docker-compose.yml      # Single-service config
++-- requirements.txt        # Python dependencies
 ```
 
 ---
 
-## Docker
+## API endpoints
 
-```bash
-docker compose up
-```
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| GET | `/api/jobs` | - | List jobs with filters, search, sorting |
+| GET | `/api/jobs/:id` | - | Single job details |
+| PATCH | `/api/applications/:id` | - | Update application status/notes |
+| GET | `/api/applications/stats/summary` | - | Dashboard statistics |
+| POST | `/api/scrape` | - | Trigger a new scraper run |
+| GET | `/api/scrape/:task_id` | - | Poll scrape task status |
+| GET | `/api/scrape` | - | List scrapers and recent tasks |
+| GET | `/api/search-history` | - | Past search queries |
+| GET | `/api/settings` | - | Get settings (API keys masked) |
+| PUT | `/api/settings` | - | Update settings |
+| POST | `/api/internal/jobs/batch` | API key | Bulk job ingestion (used by scrapers) |
+| GET | `/health` | - | Health check |
 
 ---
 
-## License
+## Configuration
 
-MIT — see [LICENSE](LICENSE)
+Settings are stored in the SQLite database and managed through the Settings page in the dashboard. Available settings:
+
+| Key | Description |
+|-----|-------------|
+| `kisski_api_key` | API key for Kisski LLM (Llama 3.3 70B) |
+| `kisski_base_url` | LLM endpoint (default: chat-ai.academiccloud.de) |
+| `llm_model` | Model identifier |
+| `internal_api_key` | Auth key for scraper-to-server communication |
+| `scraper_default_location` | Default search location |
+| `scraper_max_jobs` | Max jobs per scraper run |
+
+Environment variables in `docker-compose.yml` provide initial values; the Settings page overrides them at runtime.
 
 ---
 
-*Built as part of the Agentic AI course project — SS 2026*  
-*Official website: [keinplankarriere.de](https://keinplankarriere.de)*
-```
+## Tech stack
+
+- **Python 3.12** + FastAPI + Uvicorn
+- **React 18** + Vite 5
+- **SQLite** (zero-config, file-based)
+- **BeautifulSoup 4** + Requests (scraping)
+- **Docker** multi-stage build
+- **pydantic-settings** for configuration
+
+---
+
+## Roadmap
+
+- [x] Multi-platform job scraping (LinkedIn, StepStone, Xing, Arbeitsagentur)
+- [x] Web dashboard with search, filter, and sort
+- [x] Dashboard-triggered scraping with custom queries
+- [x] Docker deployment (single container)
+- [x] Settings management via UI
+- [ ] LaTeX CV storage and display
+- [ ] LLM-based job-CV match scoring (Kisski / Llama 3.3 70B)
+- [ ] Auto-generated cover letters
+- [ ] Indeed scraper fix (currently blocked)
+
+---
+
+## Contributors
+
+- **Amine** — Architecture, backend, scrapers, frontend, deployment
+
+---
+
+*Built for the AI Agents course at University of Applied Sciences.*
