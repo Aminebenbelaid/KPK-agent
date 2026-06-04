@@ -2,8 +2,8 @@
 Usage:
   python run_all.py                                          # run all scrapers sequentially
   python run_all.py --parallel                               # run all scrapers in parallel
-  python run_all.py indeed linkedin                          # run specific scrapers
-  python run_all.py indeed --parallel                        # run specific scrapers in parallel
+  python run_all.py linkedin stepstone                       # run specific scrapers
+  python run_all.py linkedin --parallel                      # run specific scrapers in parallel
   python run_all.py --query "Python Developer" --location "Hessen"  # custom search
   python run_all.py --list                                   # list available scrapers
 """
@@ -13,7 +13,6 @@ import importlib
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 SCRAPERS = {
-    "indeed": "indeed_scraper",
     "linkedin": "linkedin_scraper",
     "arbeitsagentur": "arbeitsagentur_scraper",
     "stepstone": "stepstone_scraper",

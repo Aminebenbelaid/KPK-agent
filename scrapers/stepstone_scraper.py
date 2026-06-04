@@ -3,7 +3,8 @@ import time
 from bs4 import BeautifulSoup
 from base import (
     get_session, make_job_id, build_job_posting, submit_jobs,
-    detect_remote_type, detect_job_type,
+    detect_remote_type, detect_job_type, clean_html,
+    fetch_detail_html, extract_jsonld_description,
 )
 
 SEARCH_QUERIES = [
@@ -72,16 +73,21 @@ def scrape_stepstone(query, location=LOCATION):
                     elif any(w in text.lower() for w in ["nordrhein", "nrw", "koeln", "duesseldorf", "essen", "dortmund", "bonn", "hessen", "frankfurt"]):
                         job_location = text[:80]
 
+                desc_raw = extract_jsonld_description(fetch_detail_html(session, job_url))
+                desc_clean = clean_html(desc_raw)
+
                 unique_key = job_url or f"{title}-{company}"
                 job_id = make_job_id("stepstone", unique_key)
-                full_text = f"{title} {job_location}"
+                full_text = f"{title} {job_location} {desc_clean}"
 
                 jobs.append(build_job_posting(
                     job_id=job_id, title=title, company=company,
                     location=job_location, source="stepstone", url=job_url,
+                    description_raw=desc_raw, description_clean=desc_clean,
                     remote_type=detect_remote_type(full_text),
                     job_type=detect_job_type(full_text),
                 ))
+                time.sleep(0.8)
             except Exception as e:
                 print(f"[stepstone] Parse error: {e}")
 

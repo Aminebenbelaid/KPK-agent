@@ -13,13 +13,14 @@ from src.models.schemas import (
     JobUpsertRequest,
     BatchUpsertRequest,
     BatchUpsertResponse,
-    ScoreUpdate,
     SearchHistoryCreate,
     ScrapeRequest,
     ScrapeStatusResponse,
 )
+from src.matching.skills import extract_skills, normalize_skills
+from src.matching.dedup import find_duplicate
 
-AVAILABLE_SCRAPERS = ["indeed", "linkedin", "arbeitsagentur", "stepstone", "xing"]
+AVAILABLE_SCRAPERS = ["linkedin", "arbeitsagentur", "stepstone", "xing"]
 _scrape_tasks = {}  # task_id -> {status, scrapers, started_at, result}
 
 router = APIRouter(prefix="/api/internal", dependencies=[Depends(require_internal_api_key)])
@@ -33,44 +34,98 @@ def _normalize_score(score: Optional[float]) -> Optional[float]:
     return min(score, 100.0)
 
 
-def _upsert_job(conn, job: JobUpsertRequest) -> tuple[dict, str]:
-    """Returns (row, action) where action is 'inserted' or 'updated'."""
+def _enrich_skills(job_data: dict) -> dict:
+    """Extract skills from title+description and merge with any provided skills."""
+    extracted = extract_skills(
+        job_data.get("title", ""),
+        job_data.get("description_clean") or job_data.get("description_raw") or "",
+    )
+    provided = list(job_data.get("skills_required") or [])
+    job_data["skills_required"] = normalize_skills(provided + extracted)
+    if job_data.get("technologies"):
+        job_data["technologies"] = normalize_skills(job_data["technologies"])
+    return job_data
+
+
+def _merge_duplicate(conn, canonical: dict, job_data: dict, now: str) -> dict:
+    """Record an extra source on the canonical row instead of inserting a new one."""
+    data = canonical["job_data"]
+    also_on = data.get("also_on") or []
+    entry = {"source": job_data.get("source"), "url": job_data.get("url")}
+    if entry["source"] and entry["source"] not in [a.get("source") for a in also_on] \
+            and entry["source"] != data.get("source"):
+        also_on.append(entry)
+    data["also_on"] = also_on
+    conn.execute(
+        "UPDATE applications SET job_data = ?, updated_at = ? WHERE id = ?",
+        (json.dumps(data), now, canonical["id"]),
+    )
+    return conn.execute(
+        "SELECT * FROM applications WHERE id = ?", (canonical["id"],)
+    ).fetchone()
+
+
+def _upsert_job(conn, job: JobUpsertRequest, dedup: bool = True) -> tuple[dict, str]:
+    """Returns (row, action) where action is 'inserted', 'updated' or 'merged'."""
     normalized_score = _normalize_score(job.match_score)
-    job_data = job.model_dump()
+    job_data = _enrich_skills(job.model_dump())
     job_data["match_score"] = normalized_score
     job_data_json = json.dumps(job_data)
     now = datetime.now(timezone.utc).isoformat()
 
     existing = conn.execute(
-        "SELECT id, match_score FROM applications WHERE job_id = ?", (job.id,)
+        "SELECT id, match_score, job_data FROM applications WHERE job_id = ?", (job.id,)
     ).fetchone()
 
     if existing:
-        current_score = existing["match_score"] or 0
-        new_score = normalized_score or 0
-        if new_score >= current_score:
-            conn.execute(
-                """UPDATE applications
-                   SET job_data = ?, match_score = ?, updated_at = ?
-                   WHERE job_id = ?""",
-                (job_data_json, normalized_score, now, job.id),
-            )
+        # Always refresh the scraped content (e.g. newly-fetched descriptions),
+        # but never downgrade an existing match score.
+        current_score = existing["match_score"]
+        if current_score is not None and (normalized_score is None or current_score >= normalized_score):
+            keep_score = current_score
+        else:
+            keep_score = normalized_score
+
+        # Preserve cross-source merge info if a re-scrape doesn't carry it.
+        prev = existing["job_data"]
+        if isinstance(prev, str):
+            try:
+                prev = json.loads(prev)
+            except (ValueError, TypeError):
+                prev = {}
+        if isinstance(prev, dict) and prev.get("also_on") and not job_data.get("also_on"):
+            job_data["also_on"] = prev["also_on"]
+
+        job_data["match_score"] = keep_score
+        conn.execute(
+            """UPDATE applications
+               SET job_data = ?, match_score = ?, updated_at = ?
+               WHERE job_id = ?""",
+            (json.dumps(job_data), keep_score, now, job.id),
+        )
         row = conn.execute(
             "SELECT * FROM applications WHERE job_id = ?", (job.id,)
         ).fetchone()
         return row, "updated"
-    else:
-        app_id = str(uuid.uuid4())
-        conn.execute(
-            """INSERT INTO applications
-               (id, job_id, job_data, match_score, status, status_history, tags, notes, created_at, updated_at)
-               VALUES (?, ?, ?, ?, 'wishlist', '[]', '[]', '', ?, ?)""",
-            (app_id, job.id, job_data_json, normalized_score, now, now),
-        )
-        row = conn.execute(
-            "SELECT * FROM applications WHERE id = ?", (app_id,)
-        ).fetchone()
-        return row, "inserted"
+
+    # New job_id: check whether it's a cross-source duplicate before inserting.
+    if dedup:
+        canonical = find_duplicate(conn, job_data)
+        if canonical:
+            row = _merge_duplicate(conn, canonical, job_data, now)
+            return row, "merged"
+
+    app_id = str(uuid.uuid4())
+    conn.execute(
+        """INSERT INTO applications
+           (id, job_id, job_data, match_score, status, status_history, tags, notes, created_at, updated_at)
+           VALUES (?, ?, ?, ?, 'wishlist', '[]', '[]', '', ?, ?)""",
+        (app_id, job.id, job_data_json, normalized_score, now, now),
+    )
+    row = conn.execute(
+        "SELECT * FROM applications WHERE id = ?", (app_id,)
+    ).fetchone()
+    return row, "inserted"
 
 
 @router.post("/jobs")
@@ -98,47 +153,6 @@ def batch_upsert_jobs(batch: BatchUpsertRequest):
                 errors.append(f"Job {i} ({job.id}): {str(e)}")
 
     return {"inserted": inserted, "updated": updated, "errors": errors}
-
-
-@router.patch("/applications/{application_id}/score")
-def update_score(application_id: str, update: ScoreUpdate):
-    normalized = _normalize_score(update.match_score)
-    details_json = json.dumps(update.match_details) if update.match_details else None
-    now = datetime.now(timezone.utc).isoformat()
-
-    with get_db() as conn:
-        existing = conn.execute(
-            "SELECT id FROM applications WHERE id = ?", (application_id,)
-        ).fetchone()
-        if not existing:
-            from fastapi import HTTPException
-            raise HTTPException(status_code=404, detail="Application not found")
-
-        if details_json:
-            conn.execute(
-                "UPDATE applications SET match_score = ?, match_details = ?, updated_at = ? WHERE id = ?",
-                (normalized, details_json, now, application_id),
-            )
-        else:
-            conn.execute(
-                "UPDATE applications SET match_score = ?, updated_at = ? WHERE id = ?",
-                (normalized, now, application_id),
-            )
-
-        row = conn.execute(
-            "SELECT * FROM applications WHERE id = ?", (application_id,)
-        ).fetchone()
-
-    return row
-
-
-@router.get("/jobs/unscored")
-def list_unscored(limit: int = Query(20, ge=1, le=100)):
-    with get_db() as conn:
-        rows = conn.execute(
-            "SELECT * FROM applications WHERE match_score IS NULL LIMIT ?", (limit,)
-        ).fetchall()
-    return rows
 
 
 def _run_scrapers_background(task_id, scrapers, parallel=False, query=None, location=None):

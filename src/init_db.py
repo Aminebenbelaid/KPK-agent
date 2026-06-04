@@ -49,19 +49,25 @@ def init_database():
         execution_time_seconds REAL,
         created_at TEXT DEFAULT (datetime('now'))
     );
-    CREATE TABLE IF NOT EXISTS feedback_log (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        application_id TEXT NOT NULL,
-        event_type TEXT NOT NULL,
-        event_data JSON,
-        user_feedback TEXT,
-        rating INTEGER,
-        created_at TEXT DEFAULT (datetime('now')),
-        FOREIGN KEY (application_id) REFERENCES applications(id)
-    );
     CREATE TABLE IF NOT EXISTS settings (
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL,
+        updated_at TEXT DEFAULT (datetime('now'))
+    );
+    CREATE TABLE IF NOT EXISTS experiences (
+        id TEXT PRIMARY KEY,
+        kind TEXT NOT NULL DEFAULT 'job',          -- 'job' | 'project'
+        title TEXT NOT NULL,
+        organization TEXT DEFAULT '',
+        description TEXT DEFAULT '',
+        stack JSON DEFAULT '[]',
+        start_date TEXT,
+        end_date TEXT,
+        ai_summary TEXT DEFAULT '',
+        ai_tags JSON DEFAULT '[]',
+        source TEXT NOT NULL DEFAULT 'manual',      -- 'manual' | 'cv'
+        sort_order INTEGER DEFAULT 0,
+        created_at TEXT DEFAULT (datetime('now')),
         updated_at TEXT DEFAULT (datetime('now'))
     );
     CREATE UNIQUE INDEX IF NOT EXISTS idx_applications_job_id ON applications(job_id);

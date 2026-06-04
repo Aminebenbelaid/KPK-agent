@@ -8,12 +8,23 @@ RUN npm run build
 FROM python:3.12-slim
 WORKDIR /app
 
+# Tectonic: self-contained LaTeX engine for CV PDF generation.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl ca-certificates \
+    && curl -fL "https://github.com/tectonic-typesetting/tectonic/releases/download/tectonic%400.15.0/tectonic-0.15.0-x86_64-unknown-linux-musl.tar.gz" -o /tmp/tectonic.tar.gz \
+    && tar -xzf /tmp/tectonic.tar.gz -C /usr/local/bin tectonic \
+    && rm /tmp/tectonic.tar.gz \
+    && rm -rf /var/lib/apt/lists/*
+
+# Persisted in the data volume so the package bundle is cached across restarts.
+ENV TECTONIC_CACHE_DIR=/app/data/tectonic-cache
+
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY src/ src/
 COPY scrapers/ scrapers/
-COPY scripts/ scripts/
+COPY cv_template/ cv_template/
 COPY data/user_profile.yaml data/user_profile.yaml
 
 COPY --from=dashboard-build /build/dist dashboard/dist

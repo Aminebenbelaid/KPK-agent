@@ -6,7 +6,7 @@ class Settings(BaseSettings):
     LLM_PROVIDER: str = "kisski"
     KISSKI_API_KEY: str = ""
     KISSKI_BASE_URL: str = "https://chat-ai.academiccloud.de/v1"
-    LLM_MODEL: str = "meta-llama/llama-3.3-70b-instruct"
+    LLM_MODEL: str = "llama-3.3-70b-instruct"
 
     TRACKER_DB_PATH: str = "data/tracker.db"
     USER_PROFILE_PATH: str = "data/user_profile.yaml"

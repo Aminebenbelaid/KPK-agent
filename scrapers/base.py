@@ -134,6 +134,55 @@ def clean_html(html_text):
     return text
 
 
+def fetch_detail_html(session, url, timeout=15):
+    """GET a job detail page, returning HTML text or '' on failure."""
+    if not url:
+        return ""
+    try:
+        resp = session.get(url, timeout=timeout)
+        if resp.status_code == 200:
+            # Fix mojibake: trust the bytes' detected encoding when the server
+            # declares none or a wrong (latin-1) charset.
+            if not resp.encoding or resp.encoding.lower() in ("iso-8859-1", "latin-1"):
+                resp.encoding = resp.apparent_encoding or "utf-8"
+            return resp.text
+    except Exception:
+        pass
+    return ""
+
+
+def extract_jsonld_description(html):
+    """Extract a JobPosting description from JSON-LD (used by StepStone/Xing/most boards)."""
+    if not html:
+        return ""
+    import json
+    from bs4 import BeautifulSoup
+    soup = BeautifulSoup(html, "html.parser")
+    for tag in soup.find_all("script", attrs={"type": "application/ld+json"}):
+        raw = tag.string or tag.get_text() or ""
+        if not raw.strip():
+            continue
+        try:
+            data = json.loads(raw)
+        except (ValueError, TypeError):
+            continue
+        items = data if isinstance(data, list) else [data]
+        # also look one level into @graph
+        expanded = []
+        for it in items:
+            if isinstance(it, dict) and isinstance(it.get("@graph"), list):
+                expanded.extend(it["@graph"])
+            else:
+                expanded.append(it)
+        for it in expanded:
+            if isinstance(it, dict) and it.get("description"):
+                t = it.get("@type", "")
+                types = t if isinstance(t, list) else [t]
+                if any("JobPosting" in str(x) for x in types):
+                    return it["description"]
+    return ""
+
+
 def detect_remote_type(text):
     lower = (text or "").lower()
     if "remote" in lower or "homeoffice" in lower or "home office" in lower:

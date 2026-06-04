@@ -1,10 +1,26 @@
 """Agentur fuer Arbeit scraper using the official REST API.
 Docs: https://github.com/bundesAPI/jobsuche-api"""
+import base64
 import requests
-from base import make_job_id, build_job_posting, submit_jobs, detect_remote_type, detect_job_type
+from base import make_job_id, build_job_posting, submit_jobs, detect_remote_type, detect_job_type, clean_html
 
 API_URL = "https://rest.arbeitsagentur.de/jobboerse/jobsuche-service/pc/v4/jobs"
+DETAIL_URL = "https://rest.arbeitsagentur.de/jobboerse/jobsuche-service/pc/v4/jobdetails/"
 API_KEY = "jobboerse-jobsuche"
+
+
+def fetch_aa_description(ref_nr):
+    """Fetch the full job description (stellenangebotsBeschreibung) for a refnr."""
+    if not ref_nr:
+        return ""
+    try:
+        enc = base64.b64encode(ref_nr.encode()).decode()
+        resp = requests.get(DETAIL_URL + enc, headers={"X-API-Key": API_KEY}, timeout=15)
+        if resp.status_code == 200:
+            return resp.json().get("stellenangebotsBeschreibung") or ""
+    except Exception:
+        pass
+    return ""
 
 SEARCH_QUERIES = [
     "Softwareentwickler",
@@ -61,7 +77,9 @@ def scrape_arbeitsagentur(query, location=LOCATION):
             eintrittsdatum = item.get("eintrittsdatum") or ""
             posted = item.get("aktuelleVeroeffentlichungsdatum") or eintrittsdatum or None
 
-            full_text = f"{title} {beruf} {job_location}"
+            desc_raw = fetch_aa_description(ref_nr)
+            desc_clean = clean_html(desc_raw)
+            full_text = f"{title} {beruf} {job_location} {desc_clean}"
 
             job_id = make_job_id("arbeitsagentur", ref_nr or f"{title}-{company}")
             job = build_job_posting(
@@ -71,6 +89,8 @@ def scrape_arbeitsagentur(query, location=LOCATION):
                 location=job_location,
                 source="arbeitsagentur",
                 url=job_url,
+                description_raw=desc_raw,
+                description_clean=desc_clean,
                 posted_date=posted,
                 remote_type=detect_remote_type(full_text),
                 job_type=detect_job_type(full_text),

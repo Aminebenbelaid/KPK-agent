@@ -121,3 +121,29 @@ def get_job(job_id: str):
 
     row.pop("rn", None)
     return row
+
+
+@router.delete("/jobs")
+def delete_jobs(source: Optional[str] = None):
+    """Delete all tracked jobs, or only those from a given source."""
+    with get_db() as conn:
+        if source:
+            cur = conn.execute(
+                "DELETE FROM applications WHERE json_extract(job_data, '$.source') = ?",
+                (source,),
+            )
+        else:
+            cur = conn.execute("DELETE FROM applications")
+        deleted = cur.rowcount
+    return {"deleted": deleted, "source": source}
+
+
+@router.delete("/jobs/{job_id}")
+def delete_job(job_id: str):
+    """Delete a single tracked job by its job_id."""
+    with get_db() as conn:
+        cur = conn.execute("DELETE FROM applications WHERE job_id = ?", (job_id,))
+        deleted = cur.rowcount
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return {"deleted": deleted, "job_id": job_id}
