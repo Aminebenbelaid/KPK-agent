@@ -22,6 +22,25 @@ from src.config import get_settings
 REQUEST_DELAY_SECONDS = 1.5
 MAX_RETRIES = 3
 
+# The Kisski model catalog rotates, so a hardcoded model can vanish (404). We resolve
+# the configured model against the live catalog and fall back through this preference
+# list to whatever is currently available.
+# Order matters: prefer NON-reasoning instruct models. Reasoning models (qwen3.x,
+# gpt-oss) burn the whole token budget on hidden <think> output and never emit the
+# JSON we ask for, so they're last-resort only.
+PREFERRED_MODELS = [
+    "llama-3.3-70b-instruct",
+    "mistral-large-3-675b-instruct-2512",
+    "meta-llama-3.1-8b-instruct",
+    "apertus-70b-instruct-2509",
+    "gemma-4-31b-it",
+    "mistral-large-instruct",
+    "openai-gpt-oss-120b",
+    "qwen3.5-122b-a10b",
+]
+
+_resolved_model: Optional[str] = None
+
 
 def _setting(key: str) -> Optional[str]:
     """Read a value from the settings table, if present."""
@@ -49,16 +68,63 @@ def _resolve(key_setting: str, attr: str) -> str:
     return getattr(get_settings(), attr, "") or ""
 
 
-def get_config() -> dict:
+def _creds() -> dict:
     return {
         "api_key": _resolve("kisski_api_key", "KISSKI_API_KEY"),
         "base_url": _resolve("kisski_base_url", "KISSKI_BASE_URL").rstrip("/"),
-        "model": _resolve("llm_model", "LLM_MODEL"),
     }
 
 
+def list_models() -> list[str]:
+    """Return the model ids currently offered by the endpoint ([] on failure)."""
+    c = _creds()
+    if not c["api_key"]:
+        return []
+    try:
+        r = requests.get(
+            f"{c['base_url']}/models",
+            headers={"Authorization": f"Bearer {c['api_key']}"},
+            timeout=20,
+        )
+        r.raise_for_status()
+        return [m.get("id") for m in r.json().get("data", []) if m.get("id")]
+    except (requests.RequestException, ValueError, KeyError):
+        return []
+
+
+def resolve_model(force: bool = False) -> str:
+    """Pick a usable model: the configured one if available, else a preferred fallback.
+
+    Cached for the process; pass force=True to re-resolve (e.g. after a 404).
+    """
+    global _resolved_model
+    if _resolved_model and not force:
+        return _resolved_model
+
+    configured = _resolve("llm_model", "LLM_MODEL")
+    available = list_models()
+    if not available:
+        # Can't list catalog (offline?) — trust the configured value.
+        _resolved_model = configured
+        return configured
+    if configured and configured in available:
+        _resolved_model = configured
+        return configured
+    for m in PREFERRED_MODELS:
+        if m in available:
+            _resolved_model = m
+            return m
+    _resolved_model = available[0]
+    return _resolved_model
+
+
+def get_config() -> dict:
+    c = _creds()
+    return {**c, "model": resolve_model()}
+
+
 def is_configured() -> bool:
-    return bool(get_config()["api_key"])
+    return bool(_creds()["api_key"])
 
 
 def _profile_summary(profile: dict) -> str:
@@ -147,28 +213,34 @@ def chat(messages, max_tokens: int = 400, temperature: float = 0.2,
     Returns the assistant message content, or None on failure. Handles 429
     rate-limiting with exponential backoff.
     """
-    cfg = get_config()
-    if not cfg["api_key"]:
+    c = _creds()
+    if not c["api_key"]:
         return None
-    payload = {
-        "model": cfg["model"],
-        "messages": messages,
-        "temperature": temperature,
-        "max_tokens": max_tokens,
-    }
+    model = resolve_model()
+    model_retried = False
     for attempt in range(MAX_RETRIES):
         try:
             resp = requests.post(
-                f"{cfg['base_url']}/chat/completions",
+                f"{c['base_url']}/chat/completions",
                 headers={
-                    "Authorization": f"Bearer {cfg['api_key']}",
+                    "Authorization": f"Bearer {c['api_key']}",
                     "Content-Type": "application/json",
                 },
-                json=payload,
+                json={
+                    "model": model,
+                    "messages": messages,
+                    "temperature": temperature,
+                    "max_tokens": max_tokens,
+                },
                 timeout=timeout,
             )
             if resp.status_code == 429:
                 time.sleep(2 ** attempt * 2)
+                continue
+            if resp.status_code == 404 and not model_retried:
+                # Model vanished from the catalog — re-resolve and retry once.
+                model_retried = True
+                model = resolve_model(force=True)
                 continue
             resp.raise_for_status()
             return resp.json()["choices"][0]["message"]["content"]
@@ -179,8 +251,7 @@ def chat(messages, max_tokens: int = 400, temperature: float = 0.2,
 
 def llm_refine(job: dict, profile: dict, timeout: int = 45) -> Optional[dict]:
     """Return {'score': float, 'explanation': str, 'method': 'llm'} or None on failure."""
-    cfg = get_config()
-    if not cfg["api_key"]:
+    if not is_configured():
         return None
 
     content = chat(

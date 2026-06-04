@@ -468,7 +468,7 @@ function Filters({ filters, onChange }) {
 const SETTING_FIELDS = [
   { key: 'kisski_api_key', label: 'Kisski API Key', type: 'password', placeholder: 'Your Kisski LLM API key' },
   { key: 'kisski_base_url', label: 'Kisski Base URL', type: 'text', placeholder: 'https://chat-ai.academiccloud.de/v1' },
-  { key: 'llm_model', label: 'LLM Model', type: 'text', placeholder: 'llama-3.3-70b-instruct' },
+  { key: 'llm_model', label: 'LLM Model', type: 'text', placeholder: 'auto (leave blank to auto-pick an available model)' },
   { key: 'internal_api_key', label: 'Internal API Key', type: 'password', placeholder: 'Key for scraper auth' },
   { key: 'scraper_default_location', label: 'Default Location', type: 'text', placeholder: 'Nordrhein-Westfalen' },
   { key: 'scraper_max_jobs', label: 'Max Jobs per Scraper', type: 'number', placeholder: '10' },

@@ -62,9 +62,9 @@ def parse_cv(text: str) -> list[dict]:
             {"role": "system", "content": "You extract structured data from CVs. Output JSON only."},
             {"role": "user", "content": _PARSE_PROMPT.format(text=text[:12000])},
         ],
-        max_tokens=2000,
+        max_tokens=3000,
         temperature=0.1,
-        timeout=120,
+        timeout=150,
     )
     parsed = llm.extract_json_any(content) if content else None
     if not isinstance(parsed, list):
