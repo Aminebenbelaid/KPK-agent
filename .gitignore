@@ -1,0 +1,24 @@
+# Secrets
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Node / dashboard build
+node_modules/
+dashboard/dist/
+
+# Data & generated artifacts (runtime, lives in the Docker volume)
+data/*.db
+data/*.db-*
+data/cv/generated/
+data/cv/assets/
+data/tectonic-cache/
+
+# OS / editor
+.DS_Store
+*.swp
