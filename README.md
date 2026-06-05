@@ -178,4 +178,8 @@ Python 3.12 · FastAPI · SQLite · React 18 + Vite · BeautifulSoup · Tectonic
 
 ---
 
+## License
+
+See [../LICENSE](../LICENSE).
+
 *Built for the AI Agents course at Westfälische Hochschule.*
