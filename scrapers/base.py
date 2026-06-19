@@ -49,7 +49,7 @@ def build_job_posting(
     job_type="full-time",
     remote_type="on-site",
     skills_required=None,
-    experience_level="entry",
+    experience_level=None,
     technologies=None,
 ):
     return {

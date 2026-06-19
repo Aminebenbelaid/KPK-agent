@@ -23,6 +23,7 @@ def list_jobs(
     remote_type: Optional[str] = None,
     min_match: Optional[float] = None,
     search: Optional[str] = None,
+    status: Optional[str] = None,
 ):
     order_clause = SORT_OPTIONS.get(sort, "match_score DESC")
 
@@ -50,6 +51,9 @@ def list_jobs(
     if min_match is not None:
         conditions.append("match_score >= ?")
         params.append(min_match)
+    if status:
+        conditions.append("status = ?")
+        params.append(status)
     if search:
         conditions.append(
             "(json_extract(job_data, '$.title') LIKE ? OR json_extract(job_data, '$.company') LIKE ?)"

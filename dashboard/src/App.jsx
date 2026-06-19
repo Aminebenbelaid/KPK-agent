@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import {
-  fetchStats, fetchJobs, updateApplication, fetchHealth, triggerScrape, getScrapeStatus,
+  fetchStats, fetchJobs, fetchJob, updateApplication, fetchHealth, triggerScrape, getScrapeStatus,
   fetchSettings, saveSettings, fetchProfile, saveProfile, triggerScoring, getScoringStatus,
   fetchScoringOverview, listExperiences, createExperience, updateExperience, deleteExperience,
   parseCvText, parseCvFile, confirmCv, matchExperiences, deleteAllJobs, tailorCv,
+  applyKit, fetchReport,
 } from './api';
 import './App.css';
 
@@ -109,6 +110,9 @@ function MatchBreakdown({ details }) {
       {details.llm?.explanation && (
         <p className="match-explanation">{details.llm.explanation}</p>
       )}
+      {details.boost > 0 && (
+        <p className="match-boost">+{details.boost} re-rank boost — matches skills from your past responses{details.boost_skills?.length ? ` (${details.boost_skills.join(', ')})` : ''}</p>
+      )}
       <div className="match-bars">
         {Object.keys(labels).map(key => {
           const pts = points[key] ?? 0;
@@ -141,7 +145,7 @@ function MatchBreakdown({ details }) {
   );
 }
 
-function JobExperienceMatch({ job }) {
+function JobExperienceMatch({ job, onGenerated }) {
   const cached = job.match_details?.experience_match || null;
   const [result, setResult] = useState(cached);
   const [loading, setLoading] = useState(false);
@@ -152,6 +156,7 @@ function JobExperienceMatch({ job }) {
     try {
       const r = await matchExperiences(job.job_id);
       setResult(r);
+      onGenerated && onGenerated();
     } catch (err) {
       setError(err.message);
     }
@@ -188,7 +193,7 @@ function JobExperienceMatch({ job }) {
   );
 }
 
-function JobCVGen({ job }) {
+function JobCVGen({ job, onGenerated }) {
   const existing = job.cv_path ? `/api/applications/${job.id}/cv` : null;
   const [state, setState] = useState(existing ? { download: existing } : null);
   const [loading, setLoading] = useState(false);
@@ -199,6 +204,7 @@ function JobCVGen({ job }) {
     try {
       const r = await tailorCv(job.job_id);
       setState(r);
+      onGenerated && onGenerated();
     } catch (err) {
       setError(err.message);
     }
@@ -231,7 +237,68 @@ function JobCVGen({ job }) {
   );
 }
 
-function JobDetail({ job, onClose }) {
+const APPLY_CHECKLIST = [
+  'Review the tailored CV and cover letter',
+  'Open the original posting and start the application',
+  'Paste / upload the CV and cover letter',
+  'Double-check name, contact details and any custom questions',
+  'Submit, then mark this job as Applied',
+];
+
+function ApplyAssistant({ job, onStatusChange, onGenerated }) {
+  // Rebuild from persisted data so closing/reopening the job keeps the prepared files.
+  const persisted = (job.cv_path || job.cover_letter_path) ? {
+    cv_download: job.cv_path ? `/api/applications/${job.id}/cv` : null,
+    cover_letter_download: job.cover_letter_path ? `/api/applications/${job.id}/cover-letter` : null,
+    cover_letter_text: null,
+    apply_url: (job.job_data || {}).url || '',
+    checklist: APPLY_CHECKLIST,
+  } : null;
+  const [kit, setKit] = useState(persisted);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+
+  const run = async () => {
+    setLoading(true); setError(null);
+    try { setKit(await applyKit(job.job_id)); onGenerated && onGenerated(); }
+    catch (err) { setError(err.message); }
+    setLoading(false);
+  };
+
+  return (
+    <div className="detail-section">
+      <div className="exp-match-head">
+        <h3>Apply Assistant</h3>
+        <button className="search-btn" onClick={run} disabled={loading}>
+          {loading ? 'Preparing…' : kit ? 'Re-prepare' : 'Prepare application'}
+        </button>
+      </div>
+      {error && <p className="scrape-error">{error}</p>}
+      {loading && <p className="muted">Tailoring your CV and writing a cover letter for this job — up to a minute.</p>}
+      {kit && (
+        <div className="kit">
+          <div className="kit-actions">
+            {kit.cv_download && <a className="search-btn" href={kit.cv_download} target="_blank" rel="noreferrer">CV (PDF)</a>}
+            {kit.cover_letter_download && <a className="search-btn" href={kit.cover_letter_download} target="_blank" rel="noreferrer">Cover letter (PDF)</a>}
+            {kit.apply_url && <a className="refresh-btn" href={kit.apply_url} target="_blank" rel="noreferrer">Open posting ↗</a>}
+            <button className="refresh-btn" onClick={() => onStatusChange(job.id, 'applied')}>Mark as applied</button>
+          </div>
+          {kit.cover_letter_text && (
+            <details className="kit-letter">
+              <summary>Preview cover letter</summary>
+              <p>{kit.cover_letter_text}</p>
+            </details>
+          )}
+          <ol className="kit-checklist">
+            {kit.checklist.map((c, i) => <li key={i}>{c}</li>)}
+          </ol>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function JobDetail({ job, onClose, onStatusChange, onGenerated }) {
   if (!job) return null;
   const data = job.job_data || {};
   const alsoOn = data.also_on || [];
@@ -272,8 +339,9 @@ function JobDetail({ job, onClose }) {
             <MatchBreakdown details={job.match_details} />
           </div>
         )}
-        <JobExperienceMatch job={job} />
-        <JobCVGen job={job} />
+        <JobExperienceMatch job={job} onGenerated={onGenerated} />
+        <JobCVGen job={job} onGenerated={onGenerated} />
+        <ApplyAssistant job={job} onStatusChange={onStatusChange} onGenerated={onGenerated} />
         {data.description_clean && (
           <div className="detail-section">
             <h3>Description</h3>
@@ -469,9 +537,10 @@ const SETTING_FIELDS = [
   { key: 'kisski_api_key', label: 'Kisski API Key', type: 'password', placeholder: 'Your Kisski LLM API key' },
   { key: 'kisski_base_url', label: 'Kisski Base URL', type: 'text', placeholder: 'https://chat-ai.academiccloud.de/v1' },
   { key: 'llm_model', label: 'LLM Model', type: 'text', placeholder: 'auto (leave blank to auto-pick an available model)' },
-  { key: 'internal_api_key', label: 'Internal API Key', type: 'password', placeholder: 'Key for scraper auth' },
-  { key: 'scraper_default_location', label: 'Default Location', type: 'text', placeholder: 'Nordrhein-Westfalen' },
-  { key: 'scraper_max_jobs', label: 'Max Jobs per Scraper', type: 'number', placeholder: '10' },
+  { key: 'cv_instructions', label: 'CV prompt add-ons', type: 'textarea',
+    placeholder: 'Extra guidance applied when tailoring your CV — e.g. "emphasise leadership and metrics", "keep it to one page", "use British spelling".' },
+  { key: 'cover_letter_instructions', label: 'Cover letter prompt add-ons', type: 'textarea',
+    placeholder: 'Extra guidance applied to cover letters — e.g. "warm, confident tone", "mention willingness to relocate", "max 250 words".' },
 ];
 
 function SettingsPanel() {
@@ -491,9 +560,9 @@ function SettingsPanel() {
     const toSave = {};
     for (const field of SETTING_FIELDS) {
       const val = values[field.key];
-      if (val && !val.includes('****')) {
-        toSave[field.key] = val;
-      }
+      if (val === undefined || val === null) continue;
+      if (typeof val === 'string' && val.includes('****')) continue; // unchanged masked secret
+      toSave[field.key] = val; // allow empty string so a field can be cleared
     }
     await saveSettings(toSave);
     setSaved(true);
@@ -514,22 +583,32 @@ function SettingsPanel() {
       </div>
       <div className="settings-grid">
         {SETTING_FIELDS.map(field => (
-          <div key={field.key} className="setting-row">
+          <div key={field.key} className={`setting-row ${field.type === 'textarea' ? 'setting-row-wide' : ''}`}>
             <label className="setting-label">{field.label}</label>
-            <div className="setting-input-wrap">
-              <input
-                type={field.type === 'password' && !showPasswords[field.key] ? 'password' : 'text'}
+            {field.type === 'textarea' ? (
+              <textarea
                 className="filter-input setting-input"
+                rows="3"
                 placeholder={field.placeholder}
                 value={values[field.key] || ''}
                 onChange={(e) => setValues(prev => ({ ...prev, [field.key]: e.target.value }))}
               />
-              {field.type === 'password' && (
-                <button className="toggle-pw" onClick={() => toggleShow(field.key)}>
-                  {showPasswords[field.key] ? 'Hide' : 'Show'}
-                </button>
-              )}
-            </div>
+            ) : (
+              <div className="setting-input-wrap">
+                <input
+                  type={field.type === 'password' && !showPasswords[field.key] ? 'password' : 'text'}
+                  className="filter-input setting-input"
+                  placeholder={field.placeholder}
+                  value={values[field.key] || ''}
+                  onChange={(e) => setValues(prev => ({ ...prev, [field.key]: e.target.value }))}
+                />
+                {field.type === 'password' && (
+                  <button className="toggle-pw" onClick={() => toggleShow(field.key)}>
+                    {showPasswords[field.key] ? 'Hide' : 'Show'}
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         ))}
       </div>
@@ -915,6 +994,94 @@ function ExperiencePanel() {
   );
 }
 
+function renderEmphasis(text) {
+  // Render the LLM summary's **bold** markup, and drop stray markdown chars.
+  const clean = (text || '').replace(/^#+\s*/gm, '').replace(/`/g, '');
+  return clean.split(/(\*\*[^*]+\*\*)/g).map((part, i) =>
+    /^\*\*[^*]+\*\*$/.test(part)
+      ? <strong key={i}>{part.slice(2, -2)}</strong>
+      : <span key={i}>{part.replace(/\*/g, '')}</span>
+  );
+}
+
+function RankList({ items }) {
+  const max = items?.[0]?.count || 1;
+  return (
+    <ul className="rank-list">
+      {items.map((it, i) => (
+        <li key={i}>
+          <span className="rank-name" title={it.name}>{it.name}</span>
+          <span className="rank-bar"><span style={{ width: `${(it.count / max) * 100}%` }} /></span>
+          <span className="rank-count">{it.count}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function TrendsPanel() {
+  const [q, setQ] = useState('');
+  const [report, setReport] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback((query) => {
+    setLoading(true);
+    fetchReport(query).then(r => { setReport(r); setLoading(false); }).catch(() => setLoading(false));
+  }, []);
+  useEffect(() => { load(''); }, [load]);
+
+  const rsplit = report?.remote_split || {};
+
+  return (
+    <div className="settings-panel">
+      <div className="settings-header"><h2>Market Trends</h2></div>
+      <p className="panel-hint">Aggregated across your tracked jobs — what the market is asking for.</p>
+      <div className="search-inputs" style={{ marginBottom: '1.5rem' }}>
+        <input className="filter-input search-query-input" placeholder="Filter by keyword (title / company)…"
+          value={q} onChange={e => setQ(e.target.value)} onKeyDown={e => e.key === 'Enter' && load(q)} />
+        <button className="search-btn" onClick={() => load(q)} disabled={loading}>{loading ? '…' : 'Analyze'}</button>
+      </div>
+
+      {loading ? <p className="muted">Loading…</p> : !report || report.total_jobs === 0 ? (
+        <p className="muted">No jobs to analyze yet — run a search first.</p>
+      ) : (
+        <>
+          <div className="trend-stats">
+            <div className="trend-stat"><div className="ts-num">{report.total_jobs}</div><div className="ts-lbl">Jobs analyzed</div></div>
+            <div className="trend-stat"><div className="ts-num">{rsplit.remote || 0}</div><div className="ts-lbl">Remote</div></div>
+            <div className="trend-stat"><div className="ts-num">{rsplit.hybrid || 0}</div><div className="ts-lbl">Hybrid</div></div>
+            <div className="trend-stat"><div className="ts-num">{rsplit['on-site'] || 0}</div><div className="ts-lbl">On-site</div></div>
+            {report.salary && (
+              <div className="trend-stat trend-stat-wide">
+                <div className="ts-num">{Math.round(report.salary.min / 1000)}k–{Math.round(report.salary.max / 1000)}k €</div>
+                <div className="ts-lbl">Salary range ({report.salary.count})</div>
+              </div>
+            )}
+          </div>
+
+          <div className="card flat trend-summary"><p>{renderEmphasis(report.summary)}</p></div>
+
+          <div className="card trend-card">
+            <h3>Most requested skills</h3>
+            <RankList items={report.top_skills} />
+          </div>
+
+          <div className="trends-grid">
+            <div className="card trend-card">
+              <h3>Top locations</h3>
+              <RankList items={report.top_locations} />
+            </div>
+            <div className="card trend-card">
+              <h3>Top companies</h3>
+              <RankList items={report.top_companies} />
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 export default function App() {
   const [stats, setStats] = useState({});
   const [jobs, setJobs] = useState([]);
@@ -976,6 +1143,7 @@ export default function App() {
           <nav className="header-tabs">
             <button className={`tab-btn ${tab === 'jobs' ? 'active' : ''}`} onClick={() => setTab('jobs')}>Jobs</button>
             <button className={`tab-btn ${tab === 'experience' ? 'active' : ''}`} onClick={() => setTab('experience')}>Experience</button>
+            <button className={`tab-btn ${tab === 'trends' ? 'active' : ''}`} onClick={() => setTab('trends')}>Trends</button>
             <button className={`tab-btn ${tab === 'settings' ? 'active' : ''}`} onClick={() => setTab('settings')}>Settings</button>
           </nav>
         </div>
@@ -1002,6 +1170,8 @@ export default function App() {
         <SettingsPanel />
       ) : tab === 'experience' ? (
         <ExperiencePanel />
+      ) : tab === 'trends' ? (
+        <TrendsPanel />
       ) : (
         <>
           <SearchPanel onComplete={loadData} />
@@ -1053,7 +1223,17 @@ export default function App() {
             </button>
           </div>
 
-          <JobDetail job={selectedJob} onClose={() => setSelectedJob(null)} />
+          <JobDetail
+            job={selectedJob}
+            onClose={() => setSelectedJob(null)}
+            onStatusChange={handleStatusChange}
+            onGenerated={async () => {
+              if (!selectedJob) return;
+              const fresh = await fetchJob(selectedJob.job_id);
+              if (fresh && fresh.id) setSelectedJob(fresh);
+              loadData();
+            }}
+          />
         </>
       )}
     </div>

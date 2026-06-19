@@ -2,6 +2,7 @@
 import json
 import time
 import uuid
+import hashlib
 import threading
 from datetime import datetime, timezone
 
@@ -10,7 +11,7 @@ from fastapi import APIRouter, HTTPException
 from src.database import get_db
 from src.api.routes.profile import load_profile
 from src.models.schemas import ScoreRunRequest
-from src.matching import scorer, llm
+from src.matching import scorer, llm, rerank
 
 router = APIRouter(prefix="/api")
 
@@ -70,25 +71,61 @@ def _augment_profile(profile: dict) -> dict:
     return augmented
 
 
-def _rule_details(job: dict, profile: dict) -> tuple[float, dict]:
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _rule_details(job: dict, profile: dict) -> dict:
     rule = scorer.score_job(job, profile)
-    details = {
-        "rule": rule,
-        "llm": None,
-        "method": "rule",
-        "score": rule["score"],
-        "scored_at": datetime.now(timezone.utc).isoformat(),
+    return {
+        "rule": rule, "llm": None, "boost": 0.0, "boost_skills": [],
+        "method": "rule", "score": rule["score"], "scored_at": _now(),
     }
-    return rule["score"], details
+
+
+def _inputs_hash(job: dict, profile: dict) -> str:
+    """Fingerprint the inputs that affect a score, so unchanged jobs can be skipped."""
+    core = {
+        "t": job.get("title"), "c": job.get("company"),
+        "sk": sorted(job.get("skills_required") or []),
+        "d": (job.get("description_clean") or job.get("description_raw") or "")[:400],
+        "rem": job.get("remote_type"), "loc_j": job.get("location"),
+        "ps": sorted(profile.get("skills") or []),
+        "tr": sorted(profile.get("target_roles") or []),
+        "loc": profile.get("location"), "pref": profile.get("preferred_remote_type"),
+        "yrs": profile.get("experience_years"), "sal": profile.get("min_salary"),
+        "sh": profile.get("success_hint"),
+    }
+    return hashlib.sha1(json.dumps(core, sort_keys=True, default=str).encode()).hexdigest()[:16]
+
+
+def _finalize(details: dict, job: dict, signal: dict) -> float:
+    """Apply the past-success boost and set the final score + method."""
+    pts, matched = rerank.boost_for(scorer.job_skills(job), signal)
+    base = details["llm"]["score"] if details.get("llm") else details["rule"]["score"]
+    details["boost"] = pts
+    details["boost_skills"] = matched
+    details["method"] = "llm" if details.get("llm") else "rule"
+    details["score"] = round(min(100.0, base + pts), 1)
+    return details["score"]
 
 
 def _save_details(app_id: str, score: float, details: dict):
-    now = datetime.now(timezone.utc).isoformat()
     with get_db() as conn:
         conn.execute(
             "UPDATE applications SET match_score = ?, match_details = ?, updated_at = ? WHERE id = ?",
-            (score, json.dumps(details), now, app_id),
+            (score, json.dumps(details), _now(), app_id),
         )
+
+
+def _prior_details(row) -> dict:
+    p = row.get("match_details")
+    if isinstance(p, str):
+        try:
+            return json.loads(p)
+        except (ValueError, TypeError):
+            return {}
+    return p or {}
 
 
 def _run_scoring(task_id: str, only_unscored: bool, use_llm: bool):
@@ -98,44 +135,52 @@ def _run_scoring(task_id: str, only_unscored: bool, use_llm: bool):
         profile = _augment_profile(load_profile())
 
         with get_db() as conn:
-            if only_unscored:
-                rows = conn.execute(
-                    "SELECT id, job_id, job_data FROM applications WHERE match_score IS NULL"
-                ).fetchall()
-            else:
-                rows = conn.execute(
-                    "SELECT id, job_id, job_data FROM applications"
-                ).fetchall()
+            signal = rerank.success_signal(conn)
+            profile["success_hint"] = rerank.summary(signal)
+            where = "WHERE match_score IS NULL" if only_unscored else ""
+            rows = conn.execute(
+                f"SELECT id, job_id, job_data, match_details FROM applications {where}"
+            ).fetchall()
 
         task["total"] = len(rows)
         llm_used = use_llm and llm.is_configured()
         task["llm_used"] = llm_used
+        task["llm_reused"] = 0
 
-        # Phase 1: rule-score everything (fast, deterministic, no rate limits).
-        scored = []  # (app_id, job, details)
+        # Phase 1: rule-score + re-rank boost everything. Reuse a cached LLM verdict
+        # when the inputs are unchanged (saves API calls / cost).
+        scored = []  # (app_id, job, details, has_llm)
         for row in rows:
             job = _parse_job(row)
-            score, details = _rule_details(job, profile)
-            _save_details(row["id"], score, details)
-            scored.append((row["id"], job, details))
+            prior = _prior_details(row)
+            h = _inputs_hash(job, profile)
+            details = _rule_details(job, profile)
+            details["inputs_hash"] = h
+            if prior.get("inputs_hash") == h and prior.get("llm"):
+                details["llm"] = prior["llm"]  # reuse, no API call
+            final = _finalize(details, job, signal)
+            _save_details(row["id"], final, details)
+            scored.append((row["id"], job, details, bool(details.get("llm"))))
             task["done"] += 1
 
-        # Phase 2: LLM-refine only the top-N rule candidates, gently (rate-limited).
+        task["llm_reused"] = sum(1 for s in scored if s[3])
+
+        # Phase 2: LLM-refine the top candidates that don't already have a verdict.
         if llm_used and scored:
-            top = sorted(scored, key=lambda t: t[2]["score"], reverse=True)[:LLM_TOP_N]
+            need = [s for s in scored if not s[3]]
+            top = sorted(need, key=lambda t: t[2]["score"], reverse=True)[:LLM_TOP_N]
             task["llm_total"] = len(top)
-            for app_id, job, details in top:
+            for app_id, job, details, _ in top:
                 refined = llm.llm_refine(job, profile)
                 if refined:
                     details["llm"] = refined
-                    details["method"] = "llm"
-                    details["score"] = refined["score"]
-                    _save_details(app_id, refined["score"], details)
+                    final = _finalize(details, job, signal)
+                    _save_details(app_id, final, details)
                 task["llm_done"] += 1
                 time.sleep(llm.REQUEST_DELAY_SECONDS)
 
         task["status"] = "completed"
-        task["finished_at"] = datetime.now(timezone.utc).isoformat()
+        task["finished_at"] = _now()
     except Exception as e:  # noqa: BLE001 - report failure to the poller
         task["status"] = "failed"
         task["error"] = str(e)

@@ -5,18 +5,20 @@ export async function fetchStats() {
   return res.json();
 }
 
-export async function fetchJobs({ limit = 20, offset = 0, sort = 'match_score_desc', source, remote_type, min_match, search } = {}) {
+export async function fetchJobs({ limit = 20, offset = 0, sort = 'match_score_desc', source, remote_type, min_match, search, status } = {}) {
   const params = new URLSearchParams({ limit, offset, sort });
   if (source) params.set('source', source);
   if (remote_type) params.set('remote_type', remote_type);
-  if (min_match) params.set('min_match', min_match);
+  if (min_match !== undefined && min_match !== '' && min_match !== null) params.set('min_match', min_match);
   if (search) params.set('search', search);
+  if (status) params.set('status', status);
   const res = await fetch(`${BASE}/api/jobs?${params}`);
   return res.json();
 }
 
 export async function fetchJob(jobId) {
   const res = await fetch(`${BASE}/api/jobs/${encodeURIComponent(jobId)}`);
+  if (!res.ok) return null;
   return res.json();
 }
 
@@ -178,6 +180,18 @@ export async function matchExperiences(jobId) {
 export async function tailorCv(jobId) {
   const res = await fetch(`${BASE}/api/cv/tailor/${encodeURIComponent(jobId)}`, { method: 'POST' });
   if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || `HTTP ${res.status}`); }
+  return res.json();
+}
+
+export async function applyKit(jobId) {
+  const res = await fetch(`${BASE}/api/apply-kit/${encodeURIComponent(jobId)}`, { method: 'POST' });
+  if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || `HTTP ${res.status}`); }
+  return res.json();
+}
+
+export async function fetchReport(q) {
+  const url = q ? `${BASE}/api/report?q=${encodeURIComponent(q)}` : `${BASE}/api/report`;
+  const res = await fetch(url);
   return res.json();
 }
 

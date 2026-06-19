@@ -252,7 +252,7 @@ def tailor_cv(job_id: str):
         if not app_row:
             raise HTTPException(404, "Job not found")
         experiences = conn.execute(
-            "SELECT kind, title, organization, ai_summary, stack FROM experiences"
+            "SELECT kind, title, organization, description, ai_summary, stack FROM experiences"
         ).fetchall()
 
     job = app_row.get("job_data") or {}
