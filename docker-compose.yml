@@ -15,10 +15,9 @@ services:
 
   cloudflared:
     image: cloudflare/cloudflared:latest
-    user: "1000"
-    command: tunnel --no-autoupdate --config /etc/cloudflared/kpk-config.yml run
-    volumes:
-      - /home/amin/.cloudflared:/etc/cloudflared:ro
+    command: tunnel --no-autoupdate run --url http://kpk:8000
+    environment:
+      - TUNNEL_TOKEN=${TUNNEL_TOKEN:-}
     depends_on:
       - kpk
     restart: unless-stopped

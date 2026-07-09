@@ -2,7 +2,7 @@
 
 > AI-assisted job search for the German market: scrape postings, match them against your real experience, generate a tailored CV + cover letter per job — now public and multi-user.
 
-**Try it:** [https://kpk.aminestudio.com](https://kpk.aminestudio.com) · every visitor gets their own private workspace
+**Try it:** [https://keinplankarriere.qantra.dev](https://keinplankarriere.qantra.dev) · every visitor gets their own private workspace
 
 ---
 
@@ -28,7 +28,7 @@
 ## Multi-user architecture (final sprint)
 
 ```
-            Internet ──► Cloudflare Tunnel (kpk.aminestudio.com)
+            Internet ──► Cloudflare Tunnel (keinplankarriere.qantra.dev)
                               │
                     ┌─────────┴──────────┐
                     │   FastAPI + React    │  cookie session per visitor
