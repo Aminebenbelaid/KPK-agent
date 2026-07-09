@@ -43,6 +43,11 @@ def create_app() -> FastAPI:
                 max_age=sessions.COOKIE_MAX_AGE,
                 httponly=True, samesite="lax", path="/",
             )
+        # Never let browsers/proxies cache the SPA shell: after a redeploy a stale
+        # index.html would point at hashed bundles that no longer exist.
+        ctype = response.headers.get("content-type", "")
+        if "text/html" in ctype:
+            response.headers["Cache-Control"] = "no-cache"
         return response
 
     app.include_router(api_router)
