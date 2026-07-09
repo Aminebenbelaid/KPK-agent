@@ -1,6 +1,6 @@
 import json
 from datetime import datetime, timezone
-from fastapi import APIRouter, Query, HTTPException
+from fastapi import APIRouter, Query, HTTPException, Request
 from typing import Optional
 from src.database import get_db
 from src.models.schemas import ApplicationUpdate, ApplicationStatus
@@ -10,20 +10,19 @@ router = APIRouter(prefix="/api")
 
 @router.get("/applications")
 def list_applications(
+    request: Request,
     status: Optional[str] = None,
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
 ):
-    conditions = []
-    params = []
+    conditions = ["session_id = ?"]
+    params: list = [request.state.effective_sid]
 
     if status:
         conditions.append("status = ?")
         params.append(status)
 
-    where_clause = ""
-    if conditions:
-        where_clause = "WHERE " + " AND ".join(conditions)
+    where_clause = "WHERE " + " AND ".join(conditions)
 
     with get_db() as conn:
         total_row = conn.execute(
@@ -40,10 +39,11 @@ def list_applications(
 
 
 @router.get("/applications/stats/summary")
-def application_stats():
+def application_stats(request: Request):
     with get_db() as conn:
         rows = conn.execute(
-            "SELECT status, COUNT(*) as count FROM applications GROUP BY status"
+            "SELECT status, COUNT(*) as count FROM applications WHERE session_id = ? GROUP BY status",
+            (request.state.effective_sid,),
         ).fetchall()
 
     result = {s.value: 0 for s in ApplicationStatus}
@@ -53,10 +53,11 @@ def application_stats():
 
 
 @router.patch("/applications/{application_id}")
-def update_application(application_id: str, update: ApplicationUpdate):
+def update_application(request: Request, application_id: str, update: ApplicationUpdate):
     with get_db() as conn:
         row = conn.execute(
-            "SELECT * FROM applications WHERE id = ?", (application_id,)
+            "SELECT * FROM applications WHERE id = ? AND session_id = ?",
+            (application_id, request.state.effective_sid),
         ).fetchone()
 
         if not row:

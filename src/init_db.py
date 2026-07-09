@@ -1,7 +1,61 @@
-"""Auto-create database tables on first run."""
+"""Auto-create database tables on first run, and migrate older schemas."""
+import json
 import sqlite3
 from pathlib import Path
 from src.config import get_settings
+
+OWNER_SID = "owner"
+
+
+def _has_column(conn, table: str, column: str) -> bool:
+    rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+    return any(r[1] == column for r in rows)
+
+
+def _migrate_sessions(conn):
+    """Add session scoping to pre-session databases. Existing data -> owner."""
+    for table in ("applications", "experiences", "search_history"):
+        if not _has_column(conn, table, "session_id"):
+            conn.execute(
+                f"ALTER TABLE {table} ADD COLUMN session_id TEXT NOT NULL DEFAULT '{OWNER_SID}'"
+            )
+
+    # job_id uniqueness is now per session
+    conn.execute("DROP INDEX IF EXISTS idx_applications_job_id")
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_apps_session_job "
+        "ON applications(session_id, job_id)"
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_apps_session ON applications(session_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_exps_session ON experiences(session_id)")
+
+    # prompt add-ons used to live in the global settings table -> move to owner scope
+    for key in ("cv_instructions", "cover_letter_instructions"):
+        row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+        if row and row[0]:
+            conn.execute(
+                "INSERT OR IGNORE INTO session_settings (session_id, key, value) VALUES (?, ?, ?)",
+                (OWNER_SID, key, row[0]),
+            )
+        conn.execute("DELETE FROM settings WHERE key = ?", (key,))
+
+    # profile used to live in a YAML file -> move to the owner profile row
+    existing = conn.execute(
+        "SELECT 1 FROM profiles WHERE session_id = ?", (OWNER_SID,)
+    ).fetchone()
+    if not existing:
+        path = Path(get_settings().USER_PROFILE_PATH)
+        data = {}
+        if path.exists():
+            try:
+                import yaml
+                data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+            except Exception:  # noqa: BLE001 - best-effort migration
+                data = {}
+        conn.execute(
+            "INSERT INTO profiles (session_id, data) VALUES (?, ?)",
+            (OWNER_SID, json.dumps(data)),
+        )
 
 
 def init_database():
@@ -36,6 +90,7 @@ def init_database():
         match_details JSON,
         notes TEXT DEFAULT '',
         tags JSON DEFAULT '[]',
+        session_id TEXT NOT NULL DEFAULT 'owner',
         created_at TEXT DEFAULT (datetime('now')),
         updated_at TEXT DEFAULT (datetime('now'))
     );
@@ -47,6 +102,7 @@ def init_database():
         results_count INTEGER,
         new_jobs_count INTEGER,
         execution_time_seconds REAL,
+        session_id TEXT NOT NULL DEFAULT 'owner',
         created_at TEXT DEFAULT (datetime('now'))
     );
     CREATE TABLE IF NOT EXISTS settings (
@@ -56,7 +112,7 @@ def init_database():
     );
     CREATE TABLE IF NOT EXISTS experiences (
         id TEXT PRIMARY KEY,
-        kind TEXT NOT NULL DEFAULT 'job',          -- 'job' | 'project'
+        kind TEXT NOT NULL DEFAULT 'job',
         title TEXT NOT NULL,
         organization TEXT DEFAULT '',
         description TEXT DEFAULT '',
@@ -65,11 +121,31 @@ def init_database():
         end_date TEXT,
         ai_summary TEXT DEFAULT '',
         ai_tags JSON DEFAULT '[]',
-        source TEXT NOT NULL DEFAULT 'manual',      -- 'manual' | 'cv'
+        source TEXT NOT NULL DEFAULT 'manual',
         sort_order INTEGER DEFAULT 0,
+        session_id TEXT NOT NULL DEFAULT 'owner',
         created_at TEXT DEFAULT (datetime('now')),
         updated_at TEXT DEFAULT (datetime('now'))
     );
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_applications_job_id ON applications(job_id);
+    CREATE TABLE IF NOT EXISTS sessions (
+        id TEXT PRIMARY KEY,
+        is_owner INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT DEFAULT (datetime('now')),
+        last_seen TEXT DEFAULT (datetime('now'))
+    );
+    CREATE TABLE IF NOT EXISTS profiles (
+        session_id TEXT PRIMARY KEY,
+        data JSON NOT NULL DEFAULT '{}',
+        updated_at TEXT DEFAULT (datetime('now'))
+    );
+    CREATE TABLE IF NOT EXISTS session_settings (
+        session_id TEXT NOT NULL,
+        key TEXT NOT NULL,
+        value TEXT NOT NULL DEFAULT '',
+        updated_at TEXT DEFAULT (datetime('now')),
+        PRIMARY KEY (session_id, key)
+    );
     """)
+    _migrate_sessions(conn)
+    conn.commit()
     conn.close()

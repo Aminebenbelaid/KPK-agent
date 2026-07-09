@@ -5,18 +5,20 @@ export async function fetchStats() {
   return res.json();
 }
 
-export async function fetchJobs({ limit = 20, offset = 0, sort = 'match_score_desc', source, remote_type, min_match, search } = {}) {
+export async function fetchJobs({ limit = 20, offset = 0, sort = 'match_score_desc', source, remote_type, min_match, search, status } = {}) {
   const params = new URLSearchParams({ limit, offset, sort });
   if (source) params.set('source', source);
   if (remote_type) params.set('remote_type', remote_type);
-  if (min_match) params.set('min_match', min_match);
+  if (min_match !== undefined && min_match !== '' && min_match !== null) params.set('min_match', min_match);
   if (search) params.set('search', search);
+  if (status) params.set('status', status);
   const res = await fetch(`${BASE}/api/jobs?${params}`);
   return res.json();
 }
 
 export async function fetchJob(jobId) {
   const res = await fetch(`${BASE}/api/jobs/${encodeURIComponent(jobId)}`);
+  if (!res.ok) return null;
   return res.json();
 }
 
@@ -178,6 +180,67 @@ export async function matchExperiences(jobId) {
 export async function tailorCv(jobId) {
   const res = await fetch(`${BASE}/api/cv/tailor/${encodeURIComponent(jobId)}`, { method: 'POST' });
   if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || `HTTP ${res.status}`); }
+  return res.json();
+}
+
+export async function applyKit(jobId) {
+  const res = await fetch(`${BASE}/api/apply-kit/${encodeURIComponent(jobId)}`, { method: 'POST' });
+  if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || `HTTP ${res.status}`); }
+  return res.json();
+}
+
+// ── Work queue ──
+export async function getQueueTask(taskId) {
+  const res = await fetch(`${BASE}/api/queue/${taskId}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+// Poll a queued task until it finishes. onUpdate receives {status, position}.
+export async function awaitQueue(submission, onUpdate) {
+  const taskId = submission.task_id;
+  for (;;) {
+    const s = await getQueueTask(taskId);
+    onUpdate && onUpdate(s);
+    if (s.status === 'done') return s.result;
+    if (s.status === 'failed') throw new Error(s.error || 'Task failed');
+    await new Promise(r => setTimeout(r, 1800));
+  }
+}
+
+// ── Session / owner ──
+export async function fetchSession() {
+  const res = await fetch(`${BASE}/api/session`);
+  return res.json();
+}
+
+export async function claimOwner(key) {
+  const res = await fetch(`${BASE}/api/session/claim`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ key }),
+  });
+  if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || `HTTP ${res.status}`); }
+  return res.json();
+}
+
+// ── CV photo ──
+export async function uploadCvPhoto(file) {
+  const fd = new FormData();
+  fd.append('file', file);
+  const res = await fetch(`${BASE}/api/cv/photo`, { method: 'POST', body: fd });
+  if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || `HTTP ${res.status}`); }
+  return res.json();
+}
+
+export async function deleteCvPhoto() {
+  const res = await fetch(`${BASE}/api/cv/photo`, { method: 'DELETE' });
+  return res.json();
+}
+
+export async function fetchReport(q) {
+  const url = q ? `${BASE}/api/report?q=${encodeURIComponent(q)}` : `${BASE}/api/report`;
+  const res = await fetch(url);
   return res.json();
 }
 

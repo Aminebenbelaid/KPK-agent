@@ -826,12 +826,77 @@ textarea.setting-input { resize: vertical; font-family: inherit; }
   .exp-form-grid { grid-template-columns: 1fr 1fr; }
 }
 
+/* ── APPLY ASSISTANT ── */
+.kit { margin-top: 0.7rem; }
+.kit-actions { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: center; }
+.kit-actions a, .kit-actions button { text-decoration: none; }
+.kit-letter { margin-top: 0.9rem; }
+.kit-letter summary { cursor: pointer; font-weight: 600; color: var(--blue-600); font-size: 0.9rem; }
+.kit-letter p { white-space: pre-wrap; font-size: 0.92rem; color: var(--text-s); margin-top: 0.5rem; line-height: 1.55; }
+.kit-checklist { margin: 0.9rem 0 0 1.1rem; color: var(--text-s); font-size: 0.9rem; }
+.kit-checklist li { margin-bottom: 0.3rem; }
+.match-boost { font-size: 0.85rem; color: var(--green); background: var(--green-bg); border-radius: var(--r-sm); padding: 0.4rem 0.7rem; margin-top: 0.3rem; }
+
+/* ── TRENDS ── */
+.trend-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.9rem; margin-bottom: 1.25rem; }
+.trend-stat { background: var(--bg-white); border: 1px solid var(--border); border-radius: var(--r-md); box-shadow: var(--shadow-sm); padding: 1rem 1.1rem; }
+.trend-stat-wide { grid-column: span 2; }
+.ts-num { font-size: 1.7rem; font-weight: 700; color: var(--blue-600); line-height: 1.1; }
+.ts-lbl { font-size: 0.8rem; color: var(--text-s); margin-top: 0.25rem; }
+.trend-summary { margin-bottom: 1.25rem; }
+.trend-summary p { font-size: 0.98rem; line-height: 1.6; }
+.trend-card { margin-bottom: 1.25rem; }
+.trend-card h3 { margin-bottom: 0.9rem; }
+.trends-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem; align-items: start; }
+
+.rank-list { list-style: none; display: flex; flex-direction: column; gap: 0.55rem; }
+.rank-list li { display: grid; grid-template-columns: 130px 1fr 34px; align-items: center; gap: 0.7rem; }
+.rank-name { font-size: 0.9rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.rank-bar { height: 10px; background: var(--blue-50); border-radius: var(--pill); overflow: hidden; }
+.rank-bar span { display: block; height: 100%; background: var(--blue-500); border-radius: var(--pill); }
+.rank-count { font-size: 0.85rem; color: var(--text-s); text-align: right; font-variant-numeric: tabular-nums; }
+
+@media (max-width: 768px){
+  .trend-stats { grid-template-columns: repeat(2, 1fr); }
+  .trend-stat-wide { grid-column: span 2; }
+  .trends-grid { grid-template-columns: 1fr; }
+}
+
 /* ── TAILORED CV ── */
 .cv-result { margin-top: 0.6rem; }
 .cv-download { display: inline-block; text-decoration: none; padding: 0.5rem 1.1rem; }
 .cv-emph-wrap { margin-top: 0.7rem; font-size: 0.88rem; color: var(--text-s); }
 .cv-emph { margin: 0.3rem 0 0 1.1rem; }
 .cv-emph li { margin-bottom: 0.25rem; }
+
+/* ── GENERIC CARD ── */
+.card {
+  background: var(--bg-white);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-sm);
+  padding: 1.1rem 1.3rem;
+}
+.card.flat { background: var(--blue-50); border-color: var(--border-blue); box-shadow: none; }
+.card h3 { font-size: 0.92rem; font-weight: 700; color: var(--blue-600); margin-bottom: 0.6rem; }
+
+/* ── CV PHOTO / ADMIN (Settings) ── */
+.photo-section { margin-bottom: 1.4rem; }
+.photo-row { display: flex; align-items: center; gap: 1rem; margin-top: 0.5rem; }
+.photo-preview { width: 84px; height: 98px; object-fit: cover; border-radius: var(--r-sm); border: 1px solid var(--border); box-shadow: var(--shadow-sm); }
+.photo-placeholder { width: 84px; height: 98px; display: flex; align-items: center; justify-content: center;
+  border: 1px dashed var(--border-blue); border-radius: var(--r-sm); color: var(--text-t); font-size: 0.78rem; background: var(--blue-50); }
+.photo-actions { display: flex; flex-direction: column; gap: 0.4rem; align-items: flex-start; }
+
+.admin-box { margin-top: 2rem; padding-top: 1.25rem; border-top: 1px solid var(--border); max-width: 460px; }
+.admin-box .setting-input-wrap { display: flex; gap: 0.5rem; margin-top: 0.4rem; }
+.owner-badge { margin-top: 2rem; font-size: 0.88rem; color: var(--green); background: var(--green-bg);
+  border-radius: var(--r-sm); padding: 0.6rem 0.9rem; display: inline-block; }
+
+/* ── ONBOARDING ── */
+.onboarding { text-align: left; max-width: 480px; margin: 0.6rem auto; color: var(--text-s); }
+.onboarding strong { color: var(--text); display: block; margin-bottom: 0.5rem; }
+.onboarding ol { margin-left: 1.2rem; display: flex; flex-direction: column; gap: 0.35rem; font-size: 0.92rem; }
 
 /* ── DANGER BUTTON ── */
 .danger-btn {

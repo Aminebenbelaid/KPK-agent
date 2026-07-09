@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import {
-  fetchStats, fetchJobs, updateApplication, fetchHealth, triggerScrape, getScrapeStatus,
+  fetchStats, fetchJobs, fetchJob, updateApplication, fetchHealth, triggerScrape, getScrapeStatus,
   fetchSettings, saveSettings, fetchProfile, saveProfile, triggerScoring, getScoringStatus,
   fetchScoringOverview, listExperiences, createExperience, updateExperience, deleteExperience,
   parseCvText, parseCvFile, confirmCv, matchExperiences, deleteAllJobs, tailorCv,
+  applyKit, fetchReport, awaitQueue, fetchSession, claimOwner, uploadCvPhoto, deleteCvPhoto,
 } from './api';
 import './App.css';
 
@@ -109,6 +110,9 @@ function MatchBreakdown({ details }) {
       {details.llm?.explanation && (
         <p className="match-explanation">{details.llm.explanation}</p>
       )}
+      {details.boost > 0 && (
+        <p className="match-boost">+{details.boost} re-rank boost — matches skills from your past responses{details.boost_skills?.length ? ` (${details.boost_skills.join(', ')})` : ''}</p>
+      )}
       <div className="match-bars">
         {Object.keys(labels).map(key => {
           const pts = points[key] ?? 0;
@@ -141,21 +145,30 @@ function MatchBreakdown({ details }) {
   );
 }
 
-function JobExperienceMatch({ job }) {
+function queueLabel(q, fallback) {
+  if (!q) return fallback;
+  if (q.status === 'queued') return q.position > 1 ? `In queue (#${q.position})…` : 'In queue…';
+  return fallback;
+}
+
+function JobExperienceMatch({ job, onGenerated }) {
   const cached = job.match_details?.experience_match || null;
   const [result, setResult] = useState(cached);
   const [loading, setLoading] = useState(false);
+  const [qstate, setQstate] = useState(null);
   const [error, setError] = useState(null);
 
   const run = async () => {
-    setLoading(true); setError(null);
+    setLoading(true); setError(null); setQstate(null);
     try {
-      const r = await matchExperiences(job.job_id);
+      const sub = await matchExperiences(job.job_id);
+      const r = await awaitQueue(sub, setQstate);
       setResult(r);
+      onGenerated && onGenerated();
     } catch (err) {
       setError(err.message);
     }
-    setLoading(false);
+    setLoading(false); setQstate(null);
   };
 
   return (
@@ -163,7 +176,7 @@ function JobExperienceMatch({ job }) {
       <div className="exp-match-head">
         <h3>Best matching experiences</h3>
         <button className="refresh-btn" onClick={run} disabled={loading}>
-          {loading ? 'Matching...' : result ? 'Re-match' : 'Find best experiences'}
+          {loading ? queueLabel(qstate, 'Matching…') : result ? 'Re-match' : 'Find best experiences'}
         </button>
       </div>
       {error && <p className="scrape-error">{error}</p>}
@@ -188,21 +201,24 @@ function JobExperienceMatch({ job }) {
   );
 }
 
-function JobCVGen({ job }) {
+function JobCVGen({ job, onGenerated }) {
   const existing = job.cv_path ? `/api/applications/${job.id}/cv` : null;
   const [state, setState] = useState(existing ? { download: existing } : null);
   const [loading, setLoading] = useState(false);
+  const [qstate, setQstate] = useState(null);
   const [error, setError] = useState(null);
 
   const run = async () => {
-    setLoading(true); setError(null);
+    setLoading(true); setError(null); setQstate(null);
     try {
-      const r = await tailorCv(job.job_id);
+      const sub = await tailorCv(job.job_id);
+      const r = await awaitQueue(sub, setQstate);
       setState(r);
+      onGenerated && onGenerated();
     } catch (err) {
       setError(err.message);
     }
-    setLoading(false);
+    setLoading(false); setQstate(null);
   };
 
   return (
@@ -210,7 +226,7 @@ function JobCVGen({ job }) {
       <div className="exp-match-head">
         <h3>Tailored CV</h3>
         <button className="refresh-btn" onClick={run} disabled={loading}>
-          {loading ? 'Generating…' : state ? 'Regenerate' : 'Generate tailored CV'}
+          {loading ? queueLabel(qstate, 'Generating…') : state ? 'Regenerate' : 'Generate tailored CV'}
         </button>
       </div>
       {error && <p className="scrape-error">{error}</p>}
@@ -231,7 +247,73 @@ function JobCVGen({ job }) {
   );
 }
 
-function JobDetail({ job, onClose }) {
+const APPLY_CHECKLIST = [
+  'Review the tailored CV and cover letter',
+  'Open the original posting and start the application',
+  'Paste / upload the CV and cover letter',
+  'Double-check name, contact details and any custom questions',
+  'Submit, then mark this job as Applied',
+];
+
+function ApplyAssistant({ job, onStatusChange, onGenerated }) {
+  // Rebuild from persisted data so closing/reopening the job keeps the prepared files.
+  const persisted = (job.cv_path || job.cover_letter_path) ? {
+    cv_download: job.cv_path ? `/api/applications/${job.id}/cv` : null,
+    cover_letter_download: job.cover_letter_path ? `/api/applications/${job.id}/cover-letter` : null,
+    cover_letter_text: null,
+    apply_url: (job.job_data || {}).url || '',
+    checklist: APPLY_CHECKLIST,
+  } : null;
+  const [kit, setKit] = useState(persisted);
+  const [loading, setLoading] = useState(false);
+  const [qstate, setQstate] = useState(null);
+  const [error, setError] = useState(null);
+
+  const run = async () => {
+    setLoading(true); setError(null); setQstate(null);
+    try {
+      const sub = await applyKit(job.job_id);
+      setKit(await awaitQueue(sub, setQstate));
+      onGenerated && onGenerated();
+    }
+    catch (err) { setError(err.message); }
+    setLoading(false); setQstate(null);
+  };
+
+  return (
+    <div className="detail-section">
+      <div className="exp-match-head">
+        <h3>Apply Assistant</h3>
+        <button className="search-btn" onClick={run} disabled={loading}>
+          {loading ? queueLabel(qstate, 'Preparing…') : kit ? 'Re-prepare' : 'Prepare application'}
+        </button>
+      </div>
+      {error && <p className="scrape-error">{error}</p>}
+      {loading && <p className="muted">Tailoring your CV and writing a cover letter for this job — up to a minute.</p>}
+      {kit && (
+        <div className="kit">
+          <div className="kit-actions">
+            {kit.cv_download && <a className="search-btn" href={kit.cv_download} target="_blank" rel="noreferrer">CV (PDF)</a>}
+            {kit.cover_letter_download && <a className="search-btn" href={kit.cover_letter_download} target="_blank" rel="noreferrer">Cover letter (PDF)</a>}
+            {kit.apply_url && <a className="refresh-btn" href={kit.apply_url} target="_blank" rel="noreferrer">Open posting ↗</a>}
+            <button className="refresh-btn" onClick={() => onStatusChange(job.id, 'applied')}>Mark as applied</button>
+          </div>
+          {kit.cover_letter_text && (
+            <details className="kit-letter">
+              <summary>Preview cover letter</summary>
+              <p>{kit.cover_letter_text}</p>
+            </details>
+          )}
+          <ol className="kit-checklist">
+            {kit.checklist.map((c, i) => <li key={i}>{c}</li>)}
+          </ol>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function JobDetail({ job, onClose, onStatusChange, onGenerated }) {
   if (!job) return null;
   const data = job.job_data || {};
   const alsoOn = data.also_on || [];
@@ -272,8 +354,9 @@ function JobDetail({ job, onClose }) {
             <MatchBreakdown details={job.match_details} />
           </div>
         )}
-        <JobExperienceMatch job={job} />
-        <JobCVGen job={job} />
+        <JobExperienceMatch job={job} onGenerated={onGenerated} />
+        <JobCVGen job={job} onGenerated={onGenerated} />
+        <ApplyAssistant job={job} onStatusChange={onStatusChange} onGenerated={onGenerated} />
         {data.description_clean && (
           <div className="detail-section">
             <h3>Description</h3>
@@ -318,13 +401,13 @@ function SearchPanel({ onComplete }) {
         location: location || null,
         parallel: true,
       });
-      setScrapeState({ taskId: res.task_id, status: 'running', error: null });
+      setScrapeState({ taskId: res.task_id, status: res.status || 'queued', position: res.position, error: null });
 
       pollRef.current = setInterval(async () => {
         try {
           const status = await getScrapeStatus(res.task_id);
-          setScrapeState(prev => ({ ...prev, status: status.status, result: status.result }));
-          if (status.status !== 'running' && status.status !== 'starting') {
+          setScrapeState(prev => ({ ...prev, status: status.status, position: status.position, result: status.result }));
+          if (!['running', 'starting', 'queued'].includes(status.status)) {
             clearInterval(pollRef.current);
             pollRef.current = null;
             if (status.status === 'completed') {
@@ -345,7 +428,8 @@ function SearchPanel({ onComplete }) {
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
   }, []);
 
-  const isRunning = scrapeState?.status === 'running' || scrapeState?.status === 'starting';
+  const isRunning = ['running', 'starting', 'queued'].includes(scrapeState?.status);
+  const isQueued = scrapeState?.status === 'queued';
 
   return (
     <div className="search-panel">
@@ -385,7 +469,7 @@ function SearchPanel({ onComplete }) {
           onClick={handleSearch}
           disabled={isRunning || selected.length === 0}
         >
-          {isRunning ? 'Searching...' : 'Search'}
+          {isQueued ? (scrapeState.position > 1 ? `Queued (#${scrapeState.position})…` : 'Queued…') : isRunning ? 'Searching…' : 'Search'}
         </button>
       </div>
       <div className="scraper-toggles">
@@ -404,7 +488,11 @@ function SearchPanel({ onComplete }) {
       {isRunning && (
         <div className="scrape-progress">
           <div className="scrape-spinner" />
-          <span>Scraping {selected.length} source{selected.length > 1 ? 's' : ''} in parallel...</span>
+          <span>
+            {isQueued
+              ? `Waiting in line${scrapeState.position > 1 ? ` — ${scrapeState.position - 1} task(s) ahead` : ''}…`
+              : `Scraping ${selected.length} source${selected.length > 1 ? 's' : ''} in parallel…`}
+          </span>
         </div>
       )}
     </div>
@@ -465,35 +553,138 @@ function Filters({ filters, onChange }) {
   );
 }
 
-const SETTING_FIELDS = [
+const GLOBAL_SETTING_FIELDS = [
   { key: 'kisski_api_key', label: 'Kisski API Key', type: 'password', placeholder: 'Your Kisski LLM API key' },
   { key: 'kisski_base_url', label: 'Kisski Base URL', type: 'text', placeholder: 'https://chat-ai.academiccloud.de/v1' },
   { key: 'llm_model', label: 'LLM Model', type: 'text', placeholder: 'auto (leave blank to auto-pick an available model)' },
-  { key: 'internal_api_key', label: 'Internal API Key', type: 'password', placeholder: 'Key for scraper auth' },
-  { key: 'scraper_default_location', label: 'Default Location', type: 'text', placeholder: 'Nordrhein-Westfalen' },
-  { key: 'scraper_max_jobs', label: 'Max Jobs per Scraper', type: 'number', placeholder: '10' },
 ];
+
+const VISITOR_LLM_FIELDS = [
+  { key: 'llm_api_key', label: 'Your LLM API key', type: 'password',
+    placeholder: 'Groq (free at console.groq.com), OpenRouter, Kisski… any OpenAI-compatible key' },
+  { key: 'llm_base_url', label: 'Provider base URL', type: 'text',
+    placeholder: 'default: https://api.groq.com/openai/v1 · OpenRouter: https://openrouter.ai/api/v1' },
+  { key: 'llm_model_session', label: 'Model', type: 'text',
+    placeholder: 'auto — e.g. llama-3.3-70b-versatile (Groq)' },
+];
+
+const SESSION_SETTING_FIELDS = [
+  { key: 'cv_instructions', label: 'CV prompt add-ons', type: 'textarea',
+    placeholder: 'Extra guidance applied when tailoring your CV — e.g. "emphasise leadership and metrics", "keep it to one page", "use British spelling".' },
+  { key: 'cover_letter_instructions', label: 'Cover letter prompt add-ons', type: 'textarea',
+    placeholder: 'Extra guidance applied to cover letters — e.g. "warm, confident tone", "mention willingness to relocate", "max 250 words".' },
+];
+
+function CvPhotoSection() {
+  const [ts, setTs] = useState(Date.now());
+  const [hasPhoto, setHasPhoto] = useState(false);
+  const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const fileRef = useRef(null);
+
+  useEffect(() => {
+    fetch(`/api/cv/photo?ts=${ts}`).then(r => setHasPhoto(r.ok)).catch(() => setHasPhoto(false));
+  }, [ts]);
+
+  const onFile = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setBusy(true); setError(null);
+    try {
+      await uploadCvPhoto(file);
+      setTs(Date.now());
+    } catch (err) { setError(err.message); }
+    setBusy(false);
+    if (fileRef.current) fileRef.current.value = '';
+  };
+
+  const onRemove = async () => {
+    setBusy(true);
+    try { await deleteCvPhoto(); setTs(Date.now()); } catch { /* ignore */ }
+    setBusy(false);
+  };
+
+  return (
+    <div className="photo-section">
+      <label className="setting-label">CV photo <span className="muted">(shown top-right of the generated CV)</span></label>
+      <div className="photo-row">
+        {hasPhoto ? (
+          <img className="photo-preview" src={`/api/cv/photo?ts=${ts}`} alt="CV" />
+        ) : (
+          <div className="photo-placeholder">No photo</div>
+        )}
+        <div className="photo-actions">
+          <label className="refresh-btn upload-btn">
+            {busy ? 'Working…' : hasPhoto ? 'Replace photo' : 'Upload photo'}
+            <input ref={fileRef} type="file" accept="image/png,image/jpeg" onChange={onFile} disabled={busy} hidden />
+          </label>
+          {hasPhoto && <button className="link-btn del" onClick={onRemove} disabled={busy}>Remove</button>}
+        </div>
+      </div>
+      {error && <p className="scrape-error">{error}</p>}
+    </div>
+  );
+}
+
+function AdminSection({ isOwner, onClaimed }) {
+  const [key, setKey] = useState('');
+  const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  if (isOwner) {
+    return <p className="owner-badge">Owner workspace — you are managing the server settings and the owner's data.</p>;
+  }
+
+  const doClaim = async () => {
+    setBusy(true); setError(null);
+    try {
+      await claimOwner(key);
+      onClaimed();
+    } catch (err) { setError(err.message); }
+    setBusy(false);
+  };
+
+  return (
+    <div className="admin-box">
+      <label className="setting-label">Admin access <span className="muted">(owner only)</span></label>
+      <div className="setting-input-wrap">
+        <input type="password" className="filter-input setting-input" placeholder="Admin key"
+          value={key} onChange={e => setKey(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && key && doClaim()} />
+        <button className="refresh-btn" onClick={doClaim} disabled={busy || !key}>Unlock</button>
+      </div>
+      {error && <p className="scrape-error">{error}</p>}
+    </div>
+  );
+}
 
 function SettingsPanel() {
   const [values, setValues] = useState({});
+  const [isOwner, setIsOwner] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saved, setSaved] = useState(false);
   const [showPasswords, setShowPasswords] = useState({});
 
-  useEffect(() => {
+  const load = useCallback(() => {
     fetchSettings().then(data => {
       setValues(data);
+      setIsOwner(!!data._is_owner);
       setLoading(false);
     }).catch(() => setLoading(false));
   }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const fields = isOwner
+    ? [...SESSION_SETTING_FIELDS, ...GLOBAL_SETTING_FIELDS]
+    : [...VISITOR_LLM_FIELDS, ...SESSION_SETTING_FIELDS];
 
   const handleSave = async () => {
     const toSave = {};
-    for (const field of SETTING_FIELDS) {
+    for (const field of fields) {
       const val = values[field.key];
-      if (val && !val.includes('****')) {
-        toSave[field.key] = val;
-      }
+      if (val === undefined || val === null) continue;
+      if (typeof val === 'string' && val.includes('****')) continue; // unchanged masked secret
+      toSave[field.key] = val; // allow empty string so a field can be cleared
     }
     await saveSettings(toSave);
     setSaved(true);
@@ -512,28 +703,54 @@ function SettingsPanel() {
         <h2>Settings</h2>
         {saved && <span className="settings-saved">Saved!</span>}
       </div>
+      <p className="panel-hint">Your settings live in this browser's workspace. The CV photo and prompt add-ons are used when generating your documents.</p>
+      {!isOwner && (
+        <div className="card flat" style={{ marginBottom: '1.4rem' }}>
+          <p style={{ fontSize: '0.92rem' }}>
+            <b>AI features run with your own key.</b> Scraping and rule-based ranking work without one —
+            but scoring refinement, CV parsing and CV/cover-letter generation need an LLM.
+            Get a free key at <a href="https://console.groq.com" target="_blank" rel="noreferrer">console.groq.com</a>,
+            paste it below, save — done. OpenRouter, Kisski or any OpenAI-compatible provider also work.
+          </p>
+        </div>
+      )}
+
+      <CvPhotoSection />
+
       <div className="settings-grid">
-        {SETTING_FIELDS.map(field => (
-          <div key={field.key} className="setting-row">
+        {fields.map(field => (
+          <div key={field.key} className={`setting-row ${field.type === 'textarea' ? 'setting-row-wide' : ''}`}>
             <label className="setting-label">{field.label}</label>
-            <div className="setting-input-wrap">
-              <input
-                type={field.type === 'password' && !showPasswords[field.key] ? 'password' : 'text'}
+            {field.type === 'textarea' ? (
+              <textarea
                 className="filter-input setting-input"
+                rows="3"
                 placeholder={field.placeholder}
                 value={values[field.key] || ''}
                 onChange={(e) => setValues(prev => ({ ...prev, [field.key]: e.target.value }))}
               />
-              {field.type === 'password' && (
-                <button className="toggle-pw" onClick={() => toggleShow(field.key)}>
-                  {showPasswords[field.key] ? 'Hide' : 'Show'}
-                </button>
-              )}
-            </div>
+            ) : (
+              <div className="setting-input-wrap">
+                <input
+                  type={field.type === 'password' && !showPasswords[field.key] ? 'password' : 'text'}
+                  className="filter-input setting-input"
+                  placeholder={field.placeholder}
+                  value={values[field.key] || ''}
+                  onChange={(e) => setValues(prev => ({ ...prev, [field.key]: e.target.value }))}
+                />
+                {field.type === 'password' && (
+                  <button className="toggle-pw" onClick={() => toggleShow(field.key)}>
+                    {showPasswords[field.key] ? 'Hide' : 'Show'}
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         ))}
       </div>
       <button className="search-btn settings-save-btn" onClick={handleSave}>Save Settings</button>
+
+      <AdminSection isOwner={isOwner} onClaimed={load} />
     </div>
   );
 }
@@ -636,12 +853,12 @@ function ScoreBar({ onComplete }) {
     try {
       setState({ status: 'starting', done: 0, total: 0 });
       const res = await triggerScoring({ only_unscored: onlyUnscored, use_llm: true });
-      setState({ taskId: res.task_id, status: 'running', done: 0, total: 0 });
+      setState({ taskId: res.task_id, status: res.status || 'queued', position: res.position, done: 0, total: 0 });
       pollRef.current = setInterval(async () => {
         try {
           const s = await getScoringStatus(res.task_id);
-          setState({ taskId: res.task_id, status: s.status, done: s.done, total: s.total, llm_done: s.llm_done, llm_total: s.llm_total });
-          if (s.status !== 'running' && s.status !== 'starting') {
+          setState({ taskId: res.task_id, status: s.status, position: s.position, done: s.done, total: s.total, llm_done: s.llm_done, llm_total: s.llm_total });
+          if (!['running', 'starting', 'queued'].includes(s.status)) {
             clearInterval(pollRef.current);
             pollRef.current = null;
             refresh();
@@ -657,7 +874,7 @@ function ScoreBar({ onComplete }) {
     }
   };
 
-  const running = state?.status === 'running' || state?.status === 'starting';
+  const running = ['running', 'starting', 'queued'].includes(state?.status);
 
   return (
     <div className="score-bar">
@@ -673,9 +890,11 @@ function ScoreBar({ onComplete }) {
       <div className="score-bar-actions">
         <button className="search-btn score-btn" disabled={running} onClick={() => runScoring(false)}>
           {running
-            ? (state.done >= state.total && state.llm_total > 0
-                ? `AI-refining ${state.llm_done}/${state.llm_total}...`
-                : `Scoring ${state.done}/${state.total}...`)
+            ? (state.status === 'queued'
+                ? (state.position > 1 ? `Queued (#${state.position})…` : 'Queued…')
+                : state.done >= state.total && state.llm_total > 0
+                  ? `AI-refining ${state.llm_done}/${state.llm_total}...`
+                  : `Scoring ${state.done}/${state.total}...`)
             : 'Score all jobs'}
         </button>
         <button className="refresh-btn" disabled={running} onClick={() => runScoring(true)}>
@@ -797,6 +1016,7 @@ function ExperiencePanel() {
   const [loading, setLoading] = useState(true);
   const [pasteText, setPasteText] = useState('');
   const [parsing, setParsing] = useState(false);
+  const [qstate, setQstate] = useState(null);
   const [review, setReview] = useState(null);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -819,18 +1039,26 @@ function ExperiencePanel() {
     const file = e.target.files?.[0];
     if (!file) return;
     setParsing(true); setError(null);
-    try { const r = await parseCvFile(file); openReview(r.experiences); }
+    try {
+      const sub = await parseCvFile(file);
+      const r = await awaitQueue(sub, setQstate);
+      openReview(r.experiences);
+    }
     catch (err) { setError(err.message); }
-    setParsing(false);
+    setParsing(false); setQstate(null);
     if (fileRef.current) fileRef.current.value = '';
   };
 
   const onParseText = async () => {
     if (!pasteText.trim()) return;
     setParsing(true); setError(null);
-    try { const r = await parseCvText(pasteText); openReview(r.experiences); }
+    try {
+      const sub = await parseCvText(pasteText);
+      const r = await awaitQueue(sub, setQstate);
+      openReview(r.experiences);
+    }
     catch (err) { setError(err.message); }
-    setParsing(false);
+    setParsing(false); setQstate(null);
   };
 
   const confirmReview = async () => {
@@ -880,14 +1108,14 @@ function ExperiencePanel() {
         <h3>Import from CV</h3>
         <div className="exp-import-row">
           <label className="search-btn upload-btn">
-            {parsing ? 'Parsing...' : 'Upload CV (PDF / text)'}
+            {parsing ? queueLabel(qstate, 'Parsing…') : 'Upload CV (PDF / text)'}
             <input ref={fileRef} type="file" accept=".pdf,.tex,.txt,.md,text/plain,application/pdf" onChange={onFile} disabled={parsing} hidden />
           </label>
           <span className="muted">or paste below</span>
         </div>
         <textarea className="filter-input" rows="4" placeholder="Paste your CV / LaTeX text here..." value={pasteText} onChange={e => setPasteText(e.target.value)} disabled={parsing} />
         <button className="refresh-btn" onClick={onParseText} disabled={parsing || !pasteText.trim()}>
-          {parsing ? 'Parsing...' : 'Parse text with AI'}
+          {parsing ? queueLabel(qstate, 'Parsing…') : 'Parse text with AI'}
         </button>
       </div>
 
@@ -911,6 +1139,94 @@ function ExperiencePanel() {
       )}
 
       <CVReviewModal review={review} setReview={setReview} onConfirm={confirmReview} busy={busy} />
+    </div>
+  );
+}
+
+function renderEmphasis(text) {
+  // Render the LLM summary's **bold** markup, and drop stray markdown chars.
+  const clean = (text || '').replace(/^#+\s*/gm, '').replace(/`/g, '');
+  return clean.split(/(\*\*[^*]+\*\*)/g).map((part, i) =>
+    /^\*\*[^*]+\*\*$/.test(part)
+      ? <strong key={i}>{part.slice(2, -2)}</strong>
+      : <span key={i}>{part.replace(/\*/g, '')}</span>
+  );
+}
+
+function RankList({ items }) {
+  const max = items?.[0]?.count || 1;
+  return (
+    <ul className="rank-list">
+      {items.map((it, i) => (
+        <li key={i}>
+          <span className="rank-name" title={it.name}>{it.name}</span>
+          <span className="rank-bar"><span style={{ width: `${(it.count / max) * 100}%` }} /></span>
+          <span className="rank-count">{it.count}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function TrendsPanel() {
+  const [q, setQ] = useState('');
+  const [report, setReport] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback((query) => {
+    setLoading(true);
+    fetchReport(query).then(r => { setReport(r); setLoading(false); }).catch(() => setLoading(false));
+  }, []);
+  useEffect(() => { load(''); }, [load]);
+
+  const rsplit = report?.remote_split || {};
+
+  return (
+    <div className="settings-panel">
+      <div className="settings-header"><h2>Market Trends</h2></div>
+      <p className="panel-hint">Aggregated across your tracked jobs — what the market is asking for.</p>
+      <div className="search-inputs" style={{ marginBottom: '1.5rem' }}>
+        <input className="filter-input search-query-input" placeholder="Filter by keyword (title / company)…"
+          value={q} onChange={e => setQ(e.target.value)} onKeyDown={e => e.key === 'Enter' && load(q)} />
+        <button className="search-btn" onClick={() => load(q)} disabled={loading}>{loading ? '…' : 'Analyze'}</button>
+      </div>
+
+      {loading ? <p className="muted">Loading…</p> : !report || report.total_jobs === 0 ? (
+        <p className="muted">No jobs to analyze yet — run a search first.</p>
+      ) : (
+        <>
+          <div className="trend-stats">
+            <div className="trend-stat"><div className="ts-num">{report.total_jobs}</div><div className="ts-lbl">Jobs analyzed</div></div>
+            <div className="trend-stat"><div className="ts-num">{rsplit.remote || 0}</div><div className="ts-lbl">Remote</div></div>
+            <div className="trend-stat"><div className="ts-num">{rsplit.hybrid || 0}</div><div className="ts-lbl">Hybrid</div></div>
+            <div className="trend-stat"><div className="ts-num">{rsplit['on-site'] || 0}</div><div className="ts-lbl">On-site</div></div>
+            {report.salary && (
+              <div className="trend-stat trend-stat-wide">
+                <div className="ts-num">{Math.round(report.salary.min / 1000)}k–{Math.round(report.salary.max / 1000)}k €</div>
+                <div className="ts-lbl">Salary range ({report.salary.count})</div>
+              </div>
+            )}
+          </div>
+
+          <div className="card flat trend-summary"><p>{renderEmphasis(report.summary)}</p></div>
+
+          <div className="card trend-card">
+            <h3>Most requested skills</h3>
+            <RankList items={report.top_skills} />
+          </div>
+
+          <div className="trends-grid">
+            <div className="card trend-card">
+              <h3>Top locations</h3>
+              <RankList items={report.top_locations} />
+            </div>
+            <div className="card trend-card">
+              <h3>Top companies</h3>
+              <RankList items={report.top_companies} />
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -976,6 +1292,7 @@ export default function App() {
           <nav className="header-tabs">
             <button className={`tab-btn ${tab === 'jobs' ? 'active' : ''}`} onClick={() => setTab('jobs')}>Jobs</button>
             <button className={`tab-btn ${tab === 'experience' ? 'active' : ''}`} onClick={() => setTab('experience')}>Experience</button>
+            <button className={`tab-btn ${tab === 'trends' ? 'active' : ''}`} onClick={() => setTab('trends')}>Trends</button>
             <button className={`tab-btn ${tab === 'settings' ? 'active' : ''}`} onClick={() => setTab('settings')}>Settings</button>
           </nav>
         </div>
@@ -1002,6 +1319,8 @@ export default function App() {
         <SettingsPanel />
       ) : tab === 'experience' ? (
         <ExperiencePanel />
+      ) : tab === 'trends' ? (
+        <TrendsPanel />
       ) : (
         <>
           <SearchPanel onComplete={loadData} />
@@ -1031,7 +1350,17 @@ export default function App() {
                   />
                 ))}
                 {jobs.length === 0 && !loading && (
-                  <tr><td colSpan="6" className="empty-row">No jobs found</td></tr>
+                  <tr><td colSpan="6" className="empty-row">
+                    <div className="onboarding">
+                      <strong>Welcome — your workspace is empty.</strong>
+                      <ol>
+                        <li>Add your background in the <b>Experience</b> tab (upload a CV or add entries)</li>
+                        <li>Run a <b>Search</b> above to pull jobs from the four boards</li>
+                        <li>Hit <b>Score all jobs</b> to rank them against you</li>
+                        <li>Open a job → <b>Prepare application</b> for a tailored CV + cover letter</li>
+                      </ol>
+                    </div>
+                  </td></tr>
                 )}
               </tbody>
             </table>
@@ -1053,7 +1382,17 @@ export default function App() {
             </button>
           </div>
 
-          <JobDetail job={selectedJob} onClose={() => setSelectedJob(null)} />
+          <JobDetail
+            job={selectedJob}
+            onClose={() => setSelectedJob(null)}
+            onStatusChange={handleStatusChange}
+            onGenerated={async () => {
+              if (!selectedJob) return;
+              const fresh = await fetchJob(selectedJob.job_id);
+              if (fresh && fresh.id) setSelectedJob(fresh);
+              loadData();
+            }}
+          />
         </>
       )}
     </div>

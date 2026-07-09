@@ -94,7 +94,6 @@ def scrape_arbeitsagentur(query, location=LOCATION):
                 posted_date=posted,
                 remote_type=detect_remote_type(full_text),
                 job_type=detect_job_type(full_text),
-                experience_level="entry",
             )
             jobs.append(job)
         except Exception as e:
