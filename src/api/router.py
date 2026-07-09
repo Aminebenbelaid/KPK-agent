@@ -1,9 +1,11 @@
 from fastapi import APIRouter
 from src.api.routes import (
-    health, jobs, applications, profile, internal, settings, matching, experiences, generate,
+    health, jobs, applications, profile, internal, settings, matching, experiences,
+    generate, session,
 )
 
 api_router = APIRouter()
+api_router.include_router(session.router)
 api_router.include_router(health.router)
 api_router.include_router(jobs.router)
 api_router.include_router(applications.router)

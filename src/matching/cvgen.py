@@ -24,8 +24,20 @@ def _data_cv_dir() -> Path:
     return Path(get_settings().TRACKER_DB_PATH).parent / "cv"
 
 
-def override_template() -> Path:
-    return _data_cv_dir() / "template.tex"
+def session_dir(sid: str) -> Path:
+    return _data_cv_dir() / "sessions" / sid
+
+
+def override_template(sid: str) -> Path:
+    return session_dir(sid) / "template.tex"
+
+
+def assets_dir(sid: str) -> Path:
+    return session_dir(sid) / "assets"
+
+
+def photo_path(sid: str) -> Path:
+    return assets_dir(sid) / "pdp.png"
 
 
 def generated_dir() -> Path:
@@ -34,9 +46,9 @@ def generated_dir() -> Path:
     return d
 
 
-def load_template() -> str:
-    """User override in the data volume wins, else the bundled template."""
-    ov = override_template()
+def load_template(sid: str) -> str:
+    """This session's override wins, else the bundled generic template."""
+    ov = override_template(sid)
     if ov.exists():
         return ov.read_text(encoding="utf-8")
     if BUNDLED_TEMPLATE.exists():
@@ -44,9 +56,9 @@ def load_template() -> str:
     raise FileNotFoundError("No CV template found")
 
 
-def _copy_assets(dest: Path):
-    """Copy any template assets (e.g. the profile photo) next to the .tex."""
-    for src_dir in (BUNDLED_ASSETS, _data_cv_dir() / "assets"):
+def _copy_assets(dest: Path, sid: str):
+    """Copy this session's template assets (e.g. the CV photo) next to the .tex."""
+    for src_dir in (BUNDLED_ASSETS, assets_dir(sid)):
         if src_dir.exists():
             for f in src_dir.iterdir():
                 if f.is_file():
@@ -102,7 +114,8 @@ def _experiences_blurb(experiences: list[dict]) -> str:
     return "\n".join(lines) or "(none on file)"
 
 
-def tailor_tex(template_tex: str, job: dict, experiences: list[dict]) -> Optional[str]:
+def tailor_tex(template_tex: str, job: dict, experiences: list[dict],
+               instructions: str = "", profile: Optional[dict] = None) -> Optional[str]:
     """Ask the LLM to tailor the resume. Returns LaTeX string or None on failure."""
     user = _TAILOR_USER.format(
         title=job.get("title", ""),
@@ -112,7 +125,13 @@ def tailor_tex(template_tex: str, job: dict, experiences: list[dict]) -> Optiona
         experiences=_experiences_blurb(experiences),
         tex=template_tex,
     )
-    extra = llm.get_setting("cv_instructions").strip()
+    if profile and (profile.get("name") or profile.get("email") or profile.get("location")):
+        user += (
+            f"\n\nCANDIDATE CONTACT (use for the resume header if it still shows placeholders):\n"
+            f"Name: {profile.get('name') or ''} | Email: {profile.get('email') or ''} | "
+            f"Location: {profile.get('location') or ''}"
+        )
+    extra = (instructions or "").strip()
     if extra:
         user += f"\n\nADDITIONAL INSTRUCTIONS FROM THE CANDIDATE (follow these, but never break the LaTeX or fabricate):\n{extra}"
     content = llm.chat(
@@ -138,12 +157,13 @@ def tailor_tex(template_tex: str, job: dict, experiences: list[dict]) -> Optiona
     return content[: end + len("\\end{document}")]
 
 
-def compile_tex(tex: str, work_dir: Path, basename: str = "cv") -> tuple[Optional[Path], str]:
+def compile_tex(tex: str, work_dir: Path, basename: str = "cv",
+                sid: str = "owner") -> tuple[Optional[Path], str]:
     """Compile LaTeX with Tectonic in work_dir. Returns (pdf_path or None, log)."""
     work_dir.mkdir(parents=True, exist_ok=True)
     tex_file = work_dir / f"{basename}.tex"
     tex_file.write_text(tex, encoding="utf-8")
-    _copy_assets(work_dir)
+    _copy_assets(work_dir, sid)
     try:
         proc = subprocess.run(
             ["tectonic", tex_file.name, "--outdir", ".", "--chatter", "minimal"],
@@ -166,28 +186,33 @@ def _bullets(tex: str) -> list[str]:
     return [m.strip() for m in re.findall(r"\\item\s+(.+)", tex)]
 
 
-def generate_for_job(job: dict, app_id: str, experiences: list[dict]) -> dict:
+def generate_for_job(job: dict, app_id: str, experiences: list[dict],
+                     sid: str = "owner", instructions: str = "",
+                     profile: Optional[dict] = None) -> dict:
     """Tailor + compile a CV for a job. Always returns a result with a PDF if possible.
 
     Returns: {pdf, tex, tailored, compiled, emphasized, log}
     """
-    template = load_template()
+    template = load_template(sid)
     work = generated_dir() / app_id
     if work.exists():
         shutil.rmtree(work, ignore_errors=True)
 
-    tailored = tailor_tex(template, job, experiences) if llm.is_configured() else None
+    tailored = (
+        tailor_tex(template, job, experiences, instructions=instructions, profile=profile)
+        if llm.is_configured() else None
+    )
     used_tailored = False
     pdf = None
     log = ""
 
     if tailored:
-        pdf, log = compile_tex(tailored, work, "cv")
+        pdf, log = compile_tex(tailored, work, "cv", sid=sid)
         if pdf is None:
             # one repair attempt with the error context
             repaired = _repair(tailored, log)
             if repaired:
-                pdf, log = compile_tex(repaired, work, "cv")
+                pdf, log = compile_tex(repaired, work, "cv", sid=sid)
                 if pdf is not None:
                     tailored = repaired
         if pdf is not None:
@@ -196,7 +221,7 @@ def generate_for_job(job: dict, app_id: str, experiences: list[dict]) -> dict:
     final_tex = tailored if used_tailored else template
     if pdf is None:
         # fall back to the untailored template (the user's known-good resume)
-        pdf, log = compile_tex(template, work, "cv")
+        pdf, log = compile_tex(template, work, "cv", sid=sid)
         final_tex = template
 
     # persist the .tex alongside the pdf

@@ -19,11 +19,12 @@ def _parse(jd):
     return jd or {}
 
 
-def success_signal(conn) -> dict:
-    """Aggregate skills/titles from applications that got a positive response."""
+def success_signal(conn, session_id: str) -> dict:
+    """Aggregate skills/titles from this session's positively-answered applications."""
     rows = conn.execute(
-        f"SELECT job_data FROM applications WHERE status IN ({','.join(['?'] * len(POSITIVE))})",
-        tuple(POSITIVE),
+        f"SELECT job_data FROM applications WHERE session_id = ? "
+        f"AND status IN ({','.join(['?'] * len(POSITIVE))})",
+        (session_id, *POSITIVE),
     ).fetchall()
     skills = Counter()
     titles = []

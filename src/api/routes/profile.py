@@ -1,14 +1,13 @@
-import os
-from typing import Optional
-import yaml
-from fastapi import APIRouter
-from src.config import get_settings
+"""Per-session candidate profile (preferences), stored in the profiles table."""
+import json
+from datetime import datetime, timezone
+
+from fastapi import APIRouter, Request
+
+from src.database import get_db
 from src.models.schemas import ProfileUpdate
 
 router = APIRouter(prefix="/api")
-
-_profile_cache: Optional[dict] = None
-_profile_mtime: float = 0.0
 
 DEFAULT_PROFILE = {
     "name": "",
@@ -24,45 +23,37 @@ DEFAULT_PROFILE = {
 }
 
 
-def load_profile() -> dict:
-    """Load the profile from disk (with caching), returning defaults if missing."""
-    global _profile_cache, _profile_mtime
-    path = get_settings().USER_PROFILE_PATH
+def load_profile(sid: str) -> dict:
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT data FROM profiles WHERE session_id = ?", (sid,)
+        ).fetchone()
+    merged = dict(DEFAULT_PROFILE)
+    if row and isinstance(row.get("data"), dict):
+        merged.update(row["data"])
+    return merged
 
-    if not os.path.exists(path):
-        return dict(DEFAULT_PROFILE)
 
-    mtime = os.path.getmtime(path)
-    if _profile_cache is None or mtime != _profile_mtime:
-        with open(path, "r", encoding="utf-8") as f:
-            loaded = yaml.safe_load(f) or {}
-        merged = dict(DEFAULT_PROFILE)
-        merged.update(loaded)
-        _profile_cache = merged
-        _profile_mtime = mtime
-
-    return _profile_cache
+def save_profile(sid: str, data: dict):
+    now = datetime.now(timezone.utc).isoformat()
+    with get_db() as conn:
+        conn.execute(
+            "INSERT INTO profiles (session_id, data, updated_at) VALUES (?, ?, ?) "
+            "ON CONFLICT(session_id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at",
+            (sid, json.dumps(data), now),
+        )
 
 
 @router.get("/profile")
-def get_profile():
-    return load_profile()
+def get_profile(request: Request):
+    return load_profile(request.state.effective_sid)
 
 
 @router.put("/profile")
-def update_profile(update: ProfileUpdate):
-    global _profile_cache, _profile_mtime
-    path = get_settings().USER_PROFILE_PATH
-
-    current = load_profile()
+def update_profile(request: Request, update: ProfileUpdate):
+    sid = request.state.effective_sid
+    current = load_profile(sid)
     patch = {k: v for k, v in update.model_dump().items() if v is not None}
     current.update(patch)
-
-    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        yaml.safe_dump(current, f, allow_unicode=True, sort_keys=False)
-
-    # Refresh cache from the freshly written file.
-    _profile_cache = current
-    _profile_mtime = os.path.getmtime(path)
+    save_profile(sid, current)
     return current

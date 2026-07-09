@@ -869,6 +869,24 @@ textarea.setting-input { resize: vertical; font-family: inherit; }
 .cv-emph { margin: 0.3rem 0 0 1.1rem; }
 .cv-emph li { margin-bottom: 0.25rem; }
 
+/* ── CV PHOTO / ADMIN (Settings) ── */
+.photo-section { margin-bottom: 1.4rem; }
+.photo-row { display: flex; align-items: center; gap: 1rem; margin-top: 0.5rem; }
+.photo-preview { width: 84px; height: 98px; object-fit: cover; border-radius: var(--r-sm); border: 1px solid var(--border); box-shadow: var(--shadow-sm); }
+.photo-placeholder { width: 84px; height: 98px; display: flex; align-items: center; justify-content: center;
+  border: 1px dashed var(--border-blue); border-radius: var(--r-sm); color: var(--text-t); font-size: 0.78rem; background: var(--blue-50); }
+.photo-actions { display: flex; flex-direction: column; gap: 0.4rem; align-items: flex-start; }
+
+.admin-box { margin-top: 2rem; padding-top: 1.25rem; border-top: 1px solid var(--border); max-width: 460px; }
+.admin-box .setting-input-wrap { display: flex; gap: 0.5rem; margin-top: 0.4rem; }
+.owner-badge { margin-top: 2rem; font-size: 0.88rem; color: var(--green); background: var(--green-bg);
+  border-radius: var(--r-sm); padding: 0.6rem 0.9rem; display: inline-block; }
+
+/* ── ONBOARDING ── */
+.onboarding { text-align: left; max-width: 480px; margin: 0.6rem auto; color: var(--text-s); }
+.onboarding strong { color: var(--text); display: block; margin-bottom: 0.5rem; }
+.onboarding ol { margin-left: 1.2rem; display: flex; flex-direction: column; gap: 0.35rem; font-size: 0.92rem; }
+
 /* ── DANGER BUTTON ── */
 .danger-btn {
   color: var(--red);

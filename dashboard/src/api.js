@@ -189,6 +189,55 @@ export async function applyKit(jobId) {
   return res.json();
 }
 
+// ── Work queue ──
+export async function getQueueTask(taskId) {
+  const res = await fetch(`${BASE}/api/queue/${taskId}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+// Poll a queued task until it finishes. onUpdate receives {status, position}.
+export async function awaitQueue(submission, onUpdate) {
+  const taskId = submission.task_id;
+  for (;;) {
+    const s = await getQueueTask(taskId);
+    onUpdate && onUpdate(s);
+    if (s.status === 'done') return s.result;
+    if (s.status === 'failed') throw new Error(s.error || 'Task failed');
+    await new Promise(r => setTimeout(r, 1800));
+  }
+}
+
+// ── Session / owner ──
+export async function fetchSession() {
+  const res = await fetch(`${BASE}/api/session`);
+  return res.json();
+}
+
+export async function claimOwner(key) {
+  const res = await fetch(`${BASE}/api/session/claim`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ key }),
+  });
+  if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || `HTTP ${res.status}`); }
+  return res.json();
+}
+
+// ── CV photo ──
+export async function uploadCvPhoto(file) {
+  const fd = new FormData();
+  fd.append('file', file);
+  const res = await fetch(`${BASE}/api/cv/photo`, { method: 'POST', body: fd });
+  if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || `HTTP ${res.status}`); }
+  return res.json();
+}
+
+export async function deleteCvPhoto() {
+  const res = await fetch(`${BASE}/api/cv/photo`, { method: 'DELETE' });
+  return res.json();
+}
+
 export async function fetchReport(q) {
   const url = q ? `${BASE}/api/report?q=${encodeURIComponent(q)}` : `${BASE}/api/report`;
   const res = await fetch(url);

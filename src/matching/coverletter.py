@@ -55,7 +55,8 @@ Experience:
 Write the body now."""
 
 
-def generate_body(job: dict, experiences: list[dict], profile: dict) -> Optional[str]:
+def generate_body(job: dict, experiences: list[dict], profile: dict,
+                  instructions: str = "") -> Optional[str]:
     user = _PROMPT.format(
         title=job.get("title", ""),
         company=job.get("company", ""),
@@ -64,7 +65,7 @@ def generate_body(job: dict, experiences: list[dict], profile: dict) -> Optional
         roles=", ".join(profile.get("target_roles") or []) or "—",
         experiences=_experiences_blurb(experiences),
     )
-    extra = llm.get_setting("cover_letter_instructions").strip()
+    extra = (instructions or "").strip()
     if extra:
         user += f"\n\nADDITIONAL INSTRUCTIONS FROM THE CANDIDATE (follow these, stay truthful):\n{extra}"
     text = llm.chat(
@@ -116,13 +117,14 @@ def _letter_tex(body: str, profile: dict, job: dict) -> str:
 """ % (header, company or "Hiring Team", title or "your role", body_tex, name or "")
 
 
-def generate(job: dict, app_id: str, experiences: list[dict], profile: dict) -> dict:
+def generate(job: dict, app_id: str, experiences: list[dict], profile: dict,
+             sid: str = "owner", instructions: str = "") -> dict:
     """Return {pdf, text, compiled}. PDF best-effort; text always present on success."""
-    body = generate_body(job, experiences, profile)
+    body = generate_body(job, experiences, profile, instructions=instructions)
     if not body:
         return {"pdf": None, "text": None, "compiled": False}
 
     work = cvgen.generated_dir() / app_id
-    pdf, log = cvgen.compile_tex(_letter_tex(body, profile, job), work, "cover_letter")
+    pdf, log = cvgen.compile_tex(_letter_tex(body, profile, job), work, "cover_letter", sid=sid)
     (work / "cover_letter.txt").write_text(body, encoding="utf-8")
     return {"pdf": str(pdf) if pdf else None, "text": body, "compiled": pdf is not None, "log": "" if pdf else log}

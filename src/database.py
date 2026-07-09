@@ -8,7 +8,7 @@ def _dict_factory(cursor, row):
     fields = [column[0] for column in cursor.description]
     result = {}
     for field, value in zip(fields, row):
-        if field in ("job_data", "status_history", "tags", "match_details", "sources_used", "event_data", "stack", "ai_tags"):
+        if field in ("job_data", "status_history", "tags", "match_details", "sources_used", "event_data", "stack", "ai_tags", "data"):
             if isinstance(value, str):
                 try:
                     value = json.loads(value)

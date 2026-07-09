@@ -10,6 +10,17 @@ services:
       - USER_PROFILE_PATH=data/user_profile.yaml
       - INTERNAL_API_KEY=${INTERNAL_API_KEY:-change-me-to-a-long-random-string}
       - KISSKI_API_KEY=${KISSKI_API_KEY:-}
+      - ADMIN_KEY=${ADMIN_KEY:-}
+    restart: unless-stopped
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    user: "1000"
+    command: tunnel --no-autoupdate --config /etc/cloudflared/kpk-config.yml run
+    volumes:
+      - /home/amin/.cloudflared:/etc/cloudflared:ro
+    depends_on:
+      - kpk
     restart: unless-stopped
 
 volumes:

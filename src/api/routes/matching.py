@@ -3,15 +3,15 @@ import json
 import time
 import uuid
 import hashlib
-import threading
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 
 from src.database import get_db
 from src.api.routes.profile import load_profile
 from src.models.schemas import ScoreRunRequest
 from src.matching import scorer, llm, rerank
+from src import task_queue
 
 router = APIRouter(prefix="/api")
 
@@ -31,7 +31,7 @@ def _parse_job(row) -> dict:
     return data or {}
 
 
-def _augment_profile(profile: dict) -> dict:
+def _augment_profile(profile: dict, sid: str) -> dict:
     """Derive the candidate's skills and experience context from the Experience base.
 
     Skills come entirely from what the candidate has actually done (experience
@@ -44,7 +44,8 @@ def _augment_profile(profile: dict) -> dict:
     exps = []
     with get_db() as conn:
         rows = conn.execute(
-            "SELECT kind, title, organization, stack, ai_summary, ai_tags FROM experiences"
+            "SELECT kind, title, organization, stack, ai_summary, ai_tags FROM experiences WHERE session_id = ?",
+            (sid,),
         ).fetchall()
     for row in rows:
         for item in (row.get("stack") or []):
@@ -128,18 +129,19 @@ def _prior_details(row) -> dict:
     return p or {}
 
 
-def _run_scoring(task_id: str, only_unscored: bool, use_llm: bool):
+def _run_scoring(task_id: str, sid: str, only_unscored: bool, use_llm: bool):
     task = _score_tasks[task_id]
     try:
         task["status"] = "running"
-        profile = _augment_profile(load_profile())
+        profile = _augment_profile(load_profile(sid), sid)
 
         with get_db() as conn:
-            signal = rerank.success_signal(conn)
+            signal = rerank.success_signal(conn, sid)
             profile["success_hint"] = rerank.summary(signal)
-            where = "WHERE match_score IS NULL" if only_unscored else ""
+            where = "WHERE session_id = ?" + (" AND match_score IS NULL" if only_unscored else "")
             rows = conn.execute(
-                f"SELECT id, job_id, job_data, match_details FROM applications {where}"
+                f"SELECT id, job_id, job_data, match_details FROM applications {where}",
+                (sid,),
             ).fetchall()
 
         task["total"] = len(rows)
@@ -187,14 +189,16 @@ def _run_scoring(task_id: str, only_unscored: bool, use_llm: bool):
 
 
 @router.post("/score")
-def trigger_scoring(req: ScoreRunRequest):
-    running = [t for t in _score_tasks.values() if t["status"] == "running"]
-    if running:
-        raise HTTPException(409, "A scoring run is already in progress")
+def trigger_scoring(request: Request, req: ScoreRunRequest):
+    sid = request.state.effective_sid
+    for t in _score_tasks.values():
+        if t.get("sid") == sid and t["status"] in ("queued", "running"):
+            raise HTTPException(409, "You already have a scoring run queued or running")
 
     task_id = str(uuid.uuid4())[:8]
     _score_tasks[task_id] = {
-        "status": "starting",
+        "status": "queued",
+        "sid": sid,
         "total": 0,
         "done": 0,
         "llm_total": 0,
@@ -203,27 +207,40 @@ def trigger_scoring(req: ScoreRunRequest):
         "llm_used": req.use_llm and llm.is_configured(),
         "started_at": datetime.now(timezone.utc).isoformat(),
         "error": None,
+        "queue_id": None,
     }
-    thread = threading.Thread(
-        target=_run_scoring, args=(task_id, req.only_unscored, req.use_llm), daemon=True
+    sub = task_queue.submit(
+        "score",
+        lambda: _run_scoring(task_id, sid, req.only_unscored, req.use_llm),
+        sid=sid,
     )
-    thread.start()
-    return {"task_id": task_id, "status": "starting", "llm_available": llm.is_configured()}
+    _score_tasks[task_id]["queue_id"] = sub["task_id"]
+    return {
+        "task_id": task_id, "status": "queued", "position": sub["position"],
+        "llm_available": llm.is_configured(),
+    }
 
 
 @router.get("/score/{task_id}")
-def get_scoring_status(task_id: str):
-    if task_id not in _score_tasks:
+def get_scoring_status(request: Request, task_id: str):
+    task = _score_tasks.get(task_id)
+    if not task or task.get("sid") != request.state.effective_sid:
         raise HTTPException(404, "Task not found")
-    return {"task_id": task_id, **_score_tasks[task_id]}
+    out = {k: v for k, v in task.items() if k not in ("sid", "queue_id")}
+    out["position"] = task_queue.position(task["queue_id"]) if task.get("queue_id") else 0
+    return {"task_id": task_id, **out}
 
 
 @router.get("/score")
-def scoring_overview():
+def scoring_overview(request: Request):
+    sid = request.state.effective_sid
     with get_db() as conn:
-        total = conn.execute("SELECT COUNT(*) c FROM applications").fetchone()["c"]
+        total = conn.execute(
+            "SELECT COUNT(*) c FROM applications WHERE session_id = ?", (sid,)
+        ).fetchone()["c"]
         scored = conn.execute(
-            "SELECT COUNT(*) c FROM applications WHERE match_score IS NOT NULL"
+            "SELECT COUNT(*) c FROM applications WHERE session_id = ? AND match_score IS NOT NULL",
+            (sid,),
         ).fetchone()["c"]
     return {
         "llm_available": llm.is_configured(),

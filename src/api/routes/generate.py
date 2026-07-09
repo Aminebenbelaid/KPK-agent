@@ -3,12 +3,14 @@ import os
 import json
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import FileResponse
 
 from src.database import get_db
 from src.api.routes.profile import load_profile
+from src.api.routes.settings import get_session_setting
 from src.matching import coverletter, report as report_mod, cvgen, llm
+from src import task_queue
 
 router = APIRouter(prefix="/api")
 
@@ -17,36 +19,40 @@ def _now():
     return datetime.now(timezone.utc).isoformat()
 
 
-def _best_app(conn, job_id: str):
+def _best_app(conn, sid: str, job_id: str):
     return conn.execute(
         """WITH best AS (
                SELECT *, ROW_NUMBER() OVER (
                    PARTITION BY job_id ORDER BY match_score DESC, updated_at DESC
-               ) rn FROM applications WHERE job_id = ?
+               ) rn FROM applications WHERE session_id = ? AND job_id = ?
            )
            SELECT * FROM best WHERE rn = 1""",
-        (job_id,),
+        (sid, job_id),
     ).fetchone()
 
 
-def _all_experiences(conn):
+def _all_experiences(conn, sid: str):
     return conn.execute(
-        "SELECT kind, title, organization, description, ai_summary, stack FROM experiences"
+        "SELECT kind, title, organization, description, ai_summary, stack "
+        "FROM experiences WHERE session_id = ?",
+        (sid,),
     ).fetchall()
 
 
 # ── Market trend report ──
 
 @router.get("/report")
-def market_report(q: str = Query(None)):
+def market_report(request: Request, q: str = Query(None)):
+    sid = request.state.effective_sid
     with get_db() as conn:
         rows = conn.execute(
             """WITH best AS (
                    SELECT *, ROW_NUMBER() OVER (
                        PARTITION BY job_id ORDER BY match_score DESC, updated_at DESC
-                   ) rn FROM applications
+                   ) rn FROM applications WHERE session_id = ?
                )
-               SELECT job_data FROM best WHERE rn = 1"""
+               SELECT job_data FROM best WHERE rn = 1""",
+            (sid,),
         ).fetchall()
     jobs = []
     for r in rows:
@@ -64,21 +70,21 @@ def market_report(q: str = Query(None)):
     return report_mod.build_report(jobs, query=q)
 
 
-# ── Cover letter ──
+# ── Cover letter (queued) ──
 
-@router.post("/cover-letter/{job_id}")
-def make_cover_letter(job_id: str):
-    if not llm.is_configured():
-        raise HTTPException(400, "LLM is not configured. Add a Kisski API key in Settings.")
+def _make_letter(sid: str, job_id: str) -> dict:
     with get_db() as conn:
-        app_row = _best_app(conn, job_id)
+        app_row = _best_app(conn, sid, job_id)
         if not app_row:
-            raise HTTPException(404, "Job not found")
-        experiences = _all_experiences(conn)
+            raise RuntimeError("Job not found")
+        experiences = _all_experiences(conn, sid)
     job = app_row.get("job_data") or {}
-    result = coverletter.generate(job, app_row["id"], experiences, load_profile())
+    result = coverletter.generate(
+        job, app_row["id"], experiences, load_profile(sid), sid=sid,
+        instructions=get_session_setting(sid, "cover_letter_instructions"),
+    )
     if not result.get("text"):
-        raise HTTPException(502, "Cover letter generation failed. Try again.")
+        raise RuntimeError("Cover letter generation failed. Try again.")
     with get_db() as conn:
         conn.execute(
             "UPDATE applications SET cover_letter_path = ?, updated_at = ? WHERE id = ?",
@@ -92,36 +98,60 @@ def make_cover_letter(job_id: str):
     }
 
 
+@router.post("/cover-letter/{job_id}")
+def make_cover_letter(request: Request, job_id: str):
+    if not llm.is_configured():
+        raise HTTPException(400, "LLM is not configured on the server.")
+    sid = request.state.effective_sid
+    return task_queue.submit("cover-letter", lambda: _make_letter(sid, job_id), sid=sid)
+
+
 @router.get("/applications/{app_id}/cover-letter")
-def download_cover_letter(app_id: str):
+def download_cover_letter(request: Request, app_id: str):
     with get_db() as conn:
-        row = conn.execute("SELECT cover_letter_path FROM applications WHERE id = ?", (app_id,)).fetchone()
+        row = conn.execute(
+            "SELECT cover_letter_path FROM applications WHERE id = ? AND session_id = ?",
+            (app_id, request.state.effective_sid),
+        ).fetchone()
     if not row or not row.get("cover_letter_path") or not os.path.exists(row["cover_letter_path"]):
         raise HTTPException(404, "No cover letter generated yet")
     return FileResponse(row["cover_letter_path"], media_type="application/pdf", filename="cover_letter.pdf")
 
 
-# ── Apply Assistant ──
+# ── Apply Assistant (queued: CV + letter in one task) ──
 
-@router.post("/apply-kit/{job_id}")
-def apply_kit(job_id: str):
-    if not llm.is_configured():
-        raise HTTPException(400, "LLM is not configured. Add a Kisski API key in Settings.")
+APPLY_CHECKLIST = [
+    "Review the tailored CV and cover letter",
+    "Open the original posting and start the application",
+    "Paste / upload the CV and cover letter",
+    "Double-check name, contact details and any custom questions",
+    "Submit, then mark this job as Applied",
+]
+
+
+def _make_kit(sid: str, job_id: str) -> dict:
     with get_db() as conn:
-        app_row = _best_app(conn, job_id)
+        app_row = _best_app(conn, sid, job_id)
         if not app_row:
-            raise HTTPException(404, "Job not found")
-        experiences = _all_experiences(conn)
+            raise RuntimeError("Job not found")
+        experiences = _all_experiences(conn, sid)
     job = app_row.get("job_data") or {}
-    profile = load_profile()
+    profile = load_profile(sid)
     app_id = app_row["id"]
 
-    cv = cvgen.generate_for_job(job, app_id, experiences)
-    letter = coverletter.generate(job, app_id, experiences, profile)
+    cv_result = cvgen.generate_for_job(
+        job, app_id, experiences, sid=sid,
+        instructions=get_session_setting(sid, "cv_instructions"),
+        profile=profile,
+    )
+    letter = coverletter.generate(
+        job, app_id, experiences, profile, sid=sid,
+        instructions=get_session_setting(sid, "cover_letter_instructions"),
+    )
 
     sets, params = [], []
-    if cv.get("compiled"):
-        sets.append("cv_path = ?"); params.append(cv["pdf"])
+    if cv_result.get("compiled"):
+        sets.append("cv_path = ?"); params.append(cv_result["pdf"])
     if letter.get("compiled"):
         sets.append("cover_letter_path = ?"); params.append(letter["pdf"])
     if sets:
@@ -132,14 +162,16 @@ def apply_kit(job_id: str):
     return {
         "app_id": app_id,
         "apply_url": job.get("url") or "",
-        "cv_download": f"/api/applications/{app_id}/cv" if cv.get("compiled") else None,
+        "cv_download": f"/api/applications/{app_id}/cv" if cv_result.get("compiled") else None,
         "cover_letter_download": f"/api/applications/{app_id}/cover-letter" if letter.get("compiled") else None,
         "cover_letter_text": letter.get("text"),
-        "checklist": [
-            "Review the tailored CV and cover letter",
-            "Open the original posting and start the application",
-            "Paste / upload the CV and cover letter",
-            "Double-check name, contact details and any custom questions",
-            "Submit, then mark this job as Applied",
-        ],
+        "checklist": APPLY_CHECKLIST,
     }
+
+
+@router.post("/apply-kit/{job_id}")
+def apply_kit(request: Request, job_id: str):
+    if not llm.is_configured():
+        raise HTTPException(400, "LLM is not configured on the server.")
+    sid = request.state.effective_sid
+    return task_queue.submit("apply-kit", lambda: _make_kit(sid, job_id), sid=sid)

@@ -4,7 +4,7 @@ import {
   fetchSettings, saveSettings, fetchProfile, saveProfile, triggerScoring, getScoringStatus,
   fetchScoringOverview, listExperiences, createExperience, updateExperience, deleteExperience,
   parseCvText, parseCvFile, confirmCv, matchExperiences, deleteAllJobs, tailorCv,
-  applyKit, fetchReport,
+  applyKit, fetchReport, awaitQueue, fetchSession, claimOwner, uploadCvPhoto, deleteCvPhoto,
 } from './api';
 import './App.css';
 
@@ -145,22 +145,30 @@ function MatchBreakdown({ details }) {
   );
 }
 
+function queueLabel(q, fallback) {
+  if (!q) return fallback;
+  if (q.status === 'queued') return q.position > 1 ? `In queue (#${q.position})…` : 'In queue…';
+  return fallback;
+}
+
 function JobExperienceMatch({ job, onGenerated }) {
   const cached = job.match_details?.experience_match || null;
   const [result, setResult] = useState(cached);
   const [loading, setLoading] = useState(false);
+  const [qstate, setQstate] = useState(null);
   const [error, setError] = useState(null);
 
   const run = async () => {
-    setLoading(true); setError(null);
+    setLoading(true); setError(null); setQstate(null);
     try {
-      const r = await matchExperiences(job.job_id);
+      const sub = await matchExperiences(job.job_id);
+      const r = await awaitQueue(sub, setQstate);
       setResult(r);
       onGenerated && onGenerated();
     } catch (err) {
       setError(err.message);
     }
-    setLoading(false);
+    setLoading(false); setQstate(null);
   };
 
   return (
@@ -168,7 +176,7 @@ function JobExperienceMatch({ job, onGenerated }) {
       <div className="exp-match-head">
         <h3>Best matching experiences</h3>
         <button className="refresh-btn" onClick={run} disabled={loading}>
-          {loading ? 'Matching...' : result ? 'Re-match' : 'Find best experiences'}
+          {loading ? queueLabel(qstate, 'Matching…') : result ? 'Re-match' : 'Find best experiences'}
         </button>
       </div>
       {error && <p className="scrape-error">{error}</p>}
@@ -197,18 +205,20 @@ function JobCVGen({ job, onGenerated }) {
   const existing = job.cv_path ? `/api/applications/${job.id}/cv` : null;
   const [state, setState] = useState(existing ? { download: existing } : null);
   const [loading, setLoading] = useState(false);
+  const [qstate, setQstate] = useState(null);
   const [error, setError] = useState(null);
 
   const run = async () => {
-    setLoading(true); setError(null);
+    setLoading(true); setError(null); setQstate(null);
     try {
-      const r = await tailorCv(job.job_id);
+      const sub = await tailorCv(job.job_id);
+      const r = await awaitQueue(sub, setQstate);
       setState(r);
       onGenerated && onGenerated();
     } catch (err) {
       setError(err.message);
     }
-    setLoading(false);
+    setLoading(false); setQstate(null);
   };
 
   return (
@@ -216,7 +226,7 @@ function JobCVGen({ job, onGenerated }) {
       <div className="exp-match-head">
         <h3>Tailored CV</h3>
         <button className="refresh-btn" onClick={run} disabled={loading}>
-          {loading ? 'Generating…' : state ? 'Regenerate' : 'Generate tailored CV'}
+          {loading ? queueLabel(qstate, 'Generating…') : state ? 'Regenerate' : 'Generate tailored CV'}
         </button>
       </div>
       {error && <p className="scrape-error">{error}</p>}
@@ -256,13 +266,18 @@ function ApplyAssistant({ job, onStatusChange, onGenerated }) {
   } : null;
   const [kit, setKit] = useState(persisted);
   const [loading, setLoading] = useState(false);
+  const [qstate, setQstate] = useState(null);
   const [error, setError] = useState(null);
 
   const run = async () => {
-    setLoading(true); setError(null);
-    try { setKit(await applyKit(job.job_id)); onGenerated && onGenerated(); }
+    setLoading(true); setError(null); setQstate(null);
+    try {
+      const sub = await applyKit(job.job_id);
+      setKit(await awaitQueue(sub, setQstate));
+      onGenerated && onGenerated();
+    }
     catch (err) { setError(err.message); }
-    setLoading(false);
+    setLoading(false); setQstate(null);
   };
 
   return (
@@ -270,7 +285,7 @@ function ApplyAssistant({ job, onStatusChange, onGenerated }) {
       <div className="exp-match-head">
         <h3>Apply Assistant</h3>
         <button className="search-btn" onClick={run} disabled={loading}>
-          {loading ? 'Preparing…' : kit ? 'Re-prepare' : 'Prepare application'}
+          {loading ? queueLabel(qstate, 'Preparing…') : kit ? 'Re-prepare' : 'Prepare application'}
         </button>
       </div>
       {error && <p className="scrape-error">{error}</p>}
@@ -386,13 +401,13 @@ function SearchPanel({ onComplete }) {
         location: location || null,
         parallel: true,
       });
-      setScrapeState({ taskId: res.task_id, status: 'running', error: null });
+      setScrapeState({ taskId: res.task_id, status: res.status || 'queued', position: res.position, error: null });
 
       pollRef.current = setInterval(async () => {
         try {
           const status = await getScrapeStatus(res.task_id);
-          setScrapeState(prev => ({ ...prev, status: status.status, result: status.result }));
-          if (status.status !== 'running' && status.status !== 'starting') {
+          setScrapeState(prev => ({ ...prev, status: status.status, position: status.position, result: status.result }));
+          if (!['running', 'starting', 'queued'].includes(status.status)) {
             clearInterval(pollRef.current);
             pollRef.current = null;
             if (status.status === 'completed') {
@@ -413,7 +428,8 @@ function SearchPanel({ onComplete }) {
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
   }, []);
 
-  const isRunning = scrapeState?.status === 'running' || scrapeState?.status === 'starting';
+  const isRunning = ['running', 'starting', 'queued'].includes(scrapeState?.status);
+  const isQueued = scrapeState?.status === 'queued';
 
   return (
     <div className="search-panel">
@@ -453,7 +469,7 @@ function SearchPanel({ onComplete }) {
           onClick={handleSearch}
           disabled={isRunning || selected.length === 0}
         >
-          {isRunning ? 'Searching...' : 'Search'}
+          {isQueued ? (scrapeState.position > 1 ? `Queued (#${scrapeState.position})…` : 'Queued…') : isRunning ? 'Searching…' : 'Search'}
         </button>
       </div>
       <div className="scraper-toggles">
@@ -472,7 +488,11 @@ function SearchPanel({ onComplete }) {
       {isRunning && (
         <div className="scrape-progress">
           <div className="scrape-spinner" />
-          <span>Scraping {selected.length} source{selected.length > 1 ? 's' : ''} in parallel...</span>
+          <span>
+            {isQueued
+              ? `Waiting in line${scrapeState.position > 1 ? ` — ${scrapeState.position - 1} task(s) ahead` : ''}…`
+              : `Scraping ${selected.length} source${selected.length > 1 ? 's' : ''} in parallel…`}
+          </span>
         </div>
       )}
     </div>
@@ -533,32 +553,125 @@ function Filters({ filters, onChange }) {
   );
 }
 
-const SETTING_FIELDS = [
+const GLOBAL_SETTING_FIELDS = [
   { key: 'kisski_api_key', label: 'Kisski API Key', type: 'password', placeholder: 'Your Kisski LLM API key' },
   { key: 'kisski_base_url', label: 'Kisski Base URL', type: 'text', placeholder: 'https://chat-ai.academiccloud.de/v1' },
   { key: 'llm_model', label: 'LLM Model', type: 'text', placeholder: 'auto (leave blank to auto-pick an available model)' },
+];
+
+const SESSION_SETTING_FIELDS = [
   { key: 'cv_instructions', label: 'CV prompt add-ons', type: 'textarea',
     placeholder: 'Extra guidance applied when tailoring your CV — e.g. "emphasise leadership and metrics", "keep it to one page", "use British spelling".' },
   { key: 'cover_letter_instructions', label: 'Cover letter prompt add-ons', type: 'textarea',
     placeholder: 'Extra guidance applied to cover letters — e.g. "warm, confident tone", "mention willingness to relocate", "max 250 words".' },
 ];
 
+function CvPhotoSection() {
+  const [ts, setTs] = useState(Date.now());
+  const [hasPhoto, setHasPhoto] = useState(false);
+  const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const fileRef = useRef(null);
+
+  useEffect(() => {
+    fetch(`/api/cv/photo?ts=${ts}`).then(r => setHasPhoto(r.ok)).catch(() => setHasPhoto(false));
+  }, [ts]);
+
+  const onFile = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setBusy(true); setError(null);
+    try {
+      await uploadCvPhoto(file);
+      setTs(Date.now());
+    } catch (err) { setError(err.message); }
+    setBusy(false);
+    if (fileRef.current) fileRef.current.value = '';
+  };
+
+  const onRemove = async () => {
+    setBusy(true);
+    try { await deleteCvPhoto(); setTs(Date.now()); } catch { /* ignore */ }
+    setBusy(false);
+  };
+
+  return (
+    <div className="photo-section">
+      <label className="setting-label">CV photo <span className="muted">(shown top-right of the generated CV)</span></label>
+      <div className="photo-row">
+        {hasPhoto ? (
+          <img className="photo-preview" src={`/api/cv/photo?ts=${ts}`} alt="CV" />
+        ) : (
+          <div className="photo-placeholder">No photo</div>
+        )}
+        <div className="photo-actions">
+          <label className="refresh-btn upload-btn">
+            {busy ? 'Working…' : hasPhoto ? 'Replace photo' : 'Upload photo'}
+            <input ref={fileRef} type="file" accept="image/png,image/jpeg" onChange={onFile} disabled={busy} hidden />
+          </label>
+          {hasPhoto && <button className="link-btn del" onClick={onRemove} disabled={busy}>Remove</button>}
+        </div>
+      </div>
+      {error && <p className="scrape-error">{error}</p>}
+    </div>
+  );
+}
+
+function AdminSection({ isOwner, onClaimed }) {
+  const [key, setKey] = useState('');
+  const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  if (isOwner) {
+    return <p className="owner-badge">Owner workspace — you are managing the server settings and the owner's data.</p>;
+  }
+
+  const doClaim = async () => {
+    setBusy(true); setError(null);
+    try {
+      await claimOwner(key);
+      onClaimed();
+    } catch (err) { setError(err.message); }
+    setBusy(false);
+  };
+
+  return (
+    <div className="admin-box">
+      <label className="setting-label">Admin access <span className="muted">(owner only)</span></label>
+      <div className="setting-input-wrap">
+        <input type="password" className="filter-input setting-input" placeholder="Admin key"
+          value={key} onChange={e => setKey(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && key && doClaim()} />
+        <button className="refresh-btn" onClick={doClaim} disabled={busy || !key}>Unlock</button>
+      </div>
+      {error && <p className="scrape-error">{error}</p>}
+    </div>
+  );
+}
+
 function SettingsPanel() {
   const [values, setValues] = useState({});
+  const [isOwner, setIsOwner] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saved, setSaved] = useState(false);
   const [showPasswords, setShowPasswords] = useState({});
 
-  useEffect(() => {
+  const load = useCallback(() => {
     fetchSettings().then(data => {
       setValues(data);
+      setIsOwner(!!data._is_owner);
       setLoading(false);
     }).catch(() => setLoading(false));
   }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const fields = isOwner
+    ? [...SESSION_SETTING_FIELDS, ...GLOBAL_SETTING_FIELDS]
+    : SESSION_SETTING_FIELDS;
 
   const handleSave = async () => {
     const toSave = {};
-    for (const field of SETTING_FIELDS) {
+    for (const field of fields) {
       const val = values[field.key];
       if (val === undefined || val === null) continue;
       if (typeof val === 'string' && val.includes('****')) continue; // unchanged masked secret
@@ -581,8 +694,12 @@ function SettingsPanel() {
         <h2>Settings</h2>
         {saved && <span className="settings-saved">Saved!</span>}
       </div>
+      <p className="panel-hint">Your settings live in this browser's workspace. The CV photo and prompt add-ons are used when generating your documents.</p>
+
+      <CvPhotoSection />
+
       <div className="settings-grid">
-        {SETTING_FIELDS.map(field => (
+        {fields.map(field => (
           <div key={field.key} className={`setting-row ${field.type === 'textarea' ? 'setting-row-wide' : ''}`}>
             <label className="setting-label">{field.label}</label>
             {field.type === 'textarea' ? (
@@ -613,6 +730,8 @@ function SettingsPanel() {
         ))}
       </div>
       <button className="search-btn settings-save-btn" onClick={handleSave}>Save Settings</button>
+
+      <AdminSection isOwner={isOwner} onClaimed={load} />
     </div>
   );
 }
@@ -715,12 +834,12 @@ function ScoreBar({ onComplete }) {
     try {
       setState({ status: 'starting', done: 0, total: 0 });
       const res = await triggerScoring({ only_unscored: onlyUnscored, use_llm: true });
-      setState({ taskId: res.task_id, status: 'running', done: 0, total: 0 });
+      setState({ taskId: res.task_id, status: res.status || 'queued', position: res.position, done: 0, total: 0 });
       pollRef.current = setInterval(async () => {
         try {
           const s = await getScoringStatus(res.task_id);
-          setState({ taskId: res.task_id, status: s.status, done: s.done, total: s.total, llm_done: s.llm_done, llm_total: s.llm_total });
-          if (s.status !== 'running' && s.status !== 'starting') {
+          setState({ taskId: res.task_id, status: s.status, position: s.position, done: s.done, total: s.total, llm_done: s.llm_done, llm_total: s.llm_total });
+          if (!['running', 'starting', 'queued'].includes(s.status)) {
             clearInterval(pollRef.current);
             pollRef.current = null;
             refresh();
@@ -736,7 +855,7 @@ function ScoreBar({ onComplete }) {
     }
   };
 
-  const running = state?.status === 'running' || state?.status === 'starting';
+  const running = ['running', 'starting', 'queued'].includes(state?.status);
 
   return (
     <div className="score-bar">
@@ -752,9 +871,11 @@ function ScoreBar({ onComplete }) {
       <div className="score-bar-actions">
         <button className="search-btn score-btn" disabled={running} onClick={() => runScoring(false)}>
           {running
-            ? (state.done >= state.total && state.llm_total > 0
-                ? `AI-refining ${state.llm_done}/${state.llm_total}...`
-                : `Scoring ${state.done}/${state.total}...`)
+            ? (state.status === 'queued'
+                ? (state.position > 1 ? `Queued (#${state.position})…` : 'Queued…')
+                : state.done >= state.total && state.llm_total > 0
+                  ? `AI-refining ${state.llm_done}/${state.llm_total}...`
+                  : `Scoring ${state.done}/${state.total}...`)
             : 'Score all jobs'}
         </button>
         <button className="refresh-btn" disabled={running} onClick={() => runScoring(true)}>
@@ -876,6 +997,7 @@ function ExperiencePanel() {
   const [loading, setLoading] = useState(true);
   const [pasteText, setPasteText] = useState('');
   const [parsing, setParsing] = useState(false);
+  const [qstate, setQstate] = useState(null);
   const [review, setReview] = useState(null);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -898,18 +1020,26 @@ function ExperiencePanel() {
     const file = e.target.files?.[0];
     if (!file) return;
     setParsing(true); setError(null);
-    try { const r = await parseCvFile(file); openReview(r.experiences); }
+    try {
+      const sub = await parseCvFile(file);
+      const r = await awaitQueue(sub, setQstate);
+      openReview(r.experiences);
+    }
     catch (err) { setError(err.message); }
-    setParsing(false);
+    setParsing(false); setQstate(null);
     if (fileRef.current) fileRef.current.value = '';
   };
 
   const onParseText = async () => {
     if (!pasteText.trim()) return;
     setParsing(true); setError(null);
-    try { const r = await parseCvText(pasteText); openReview(r.experiences); }
+    try {
+      const sub = await parseCvText(pasteText);
+      const r = await awaitQueue(sub, setQstate);
+      openReview(r.experiences);
+    }
     catch (err) { setError(err.message); }
-    setParsing(false);
+    setParsing(false); setQstate(null);
   };
 
   const confirmReview = async () => {
@@ -959,14 +1089,14 @@ function ExperiencePanel() {
         <h3>Import from CV</h3>
         <div className="exp-import-row">
           <label className="search-btn upload-btn">
-            {parsing ? 'Parsing...' : 'Upload CV (PDF / text)'}
+            {parsing ? queueLabel(qstate, 'Parsing…') : 'Upload CV (PDF / text)'}
             <input ref={fileRef} type="file" accept=".pdf,.tex,.txt,.md,text/plain,application/pdf" onChange={onFile} disabled={parsing} hidden />
           </label>
           <span className="muted">or paste below</span>
         </div>
         <textarea className="filter-input" rows="4" placeholder="Paste your CV / LaTeX text here..." value={pasteText} onChange={e => setPasteText(e.target.value)} disabled={parsing} />
         <button className="refresh-btn" onClick={onParseText} disabled={parsing || !pasteText.trim()}>
-          {parsing ? 'Parsing...' : 'Parse text with AI'}
+          {parsing ? queueLabel(qstate, 'Parsing…') : 'Parse text with AI'}
         </button>
       </div>
 
@@ -1201,7 +1331,17 @@ export default function App() {
                   />
                 ))}
                 {jobs.length === 0 && !loading && (
-                  <tr><td colSpan="6" className="empty-row">No jobs found</td></tr>
+                  <tr><td colSpan="6" className="empty-row">
+                    <div className="onboarding">
+                      <strong>Welcome — your workspace is empty.</strong>
+                      <ol>
+                        <li>Add your background in the <b>Experience</b> tab (upload a CV or add entries)</li>
+                        <li>Run a <b>Search</b> above to pull jobs from the four boards</li>
+                        <li>Hit <b>Score all jobs</b> to rank them against you</li>
+                        <li>Open a job → <b>Prepare application</b> for a tailored CV + cover letter</li>
+                      </ol>
+                    </div>
+                  </td></tr>
                 )}
               </tbody>
             </table>

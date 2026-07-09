@@ -83,7 +83,13 @@ def submit_jobs(jobs, source, query, location):
         return {}
 
     start = time.time()
-    headers = {"X-Internal-Api-Key": API_KEY, "Content-Type": "application/json"}
+    import os
+    headers = {
+        "X-Internal-Api-Key": API_KEY,
+        "Content-Type": "application/json",
+        # which workspace this scrape belongs to (set by the API when it spawns us)
+        "X-Kpk-Session": os.environ.get("KPK_SESSION", "owner"),
+    }
 
     try:
         result = requests.post(

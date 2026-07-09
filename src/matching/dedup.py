@@ -57,8 +57,8 @@ def is_duplicate(job_a: dict, job_b: dict) -> tuple[bool, float]:
     return False, 0.0
 
 
-def find_duplicate(conn, job: dict) -> Optional[dict]:
-    """Find an existing application that is a near-duplicate of ``job``.
+def find_duplicate(conn, job: dict, session_id: str) -> Optional[dict]:
+    """Find an existing application (in this session) that near-duplicates ``job``.
 
     Only considers postings from a *different* source — the same source updating
     its own posting is handled by the normal job_id upsert path.
@@ -66,7 +66,8 @@ def find_duplicate(conn, job: dict) -> Optional[dict]:
     """
     source = job.get("source")
     rows = conn.execute(
-        "SELECT id, job_id, job_data FROM applications"
+        "SELECT id, job_id, job_data FROM applications WHERE session_id = ?",
+        (session_id,),
     ).fetchall()
 
     best = None
