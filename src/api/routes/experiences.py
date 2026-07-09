@@ -100,10 +100,11 @@ def list_experiences(request: Request):
 def create_experience(request: Request, exp: ExperienceCreate):
     sid = _sid(request)
     data = exp.model_dump()
-    if exp.source != "cv" and not exp.ai_summary and llm.is_configured():
-        enriched = cv.enrich_experience(
-            exp.title, exp.description or "", exp.stack, exp.organization or ""
-        )
+    if exp.source != "cv" and not exp.ai_summary and llm.is_configured_for(sid):
+        with llm.for_session(sid):
+            enriched = cv.enrich_experience(
+                exp.title, exp.description or "", exp.stack, exp.organization or ""
+            )
         if enriched:
             data["ai_summary"] = enriched["ai_summary"]
             data["ai_tags"] = enriched["ai_tags"]
@@ -159,23 +160,26 @@ def delete_experience(request: Request, exp_id: str):
 
 # ── CV parse / confirm (parsing runs on the queue) ──
 
+def _parse_job_fn(sid: str, text: str, extra: dict):
+    def run():
+        with llm.for_session(sid):
+            return {"experiences": cv.parse_cv(text), "text_chars": len(text), **extra}
+    return run
+
+
 @router.post("/cv/parse-text")
 def parse_cv_text(request: Request, req: CVParseRequest):
-    if not llm.is_configured():
-        raise HTTPException(400, "LLM is not configured on the server.")
-    text = req.text
-    sub = task_queue.submit(
-        "cv-parse",
-        lambda: {"experiences": cv.parse_cv(text), "text_chars": len(text)},
-        sid=_sid(request),
-    )
-    return sub
+    sid = _sid(request)
+    if not llm.is_configured_for(sid):
+        raise HTTPException(400, llm.NEEDS_KEY_MSG)
+    return task_queue.submit("cv-parse", _parse_job_fn(sid, req.text, {}), sid=sid)
 
 
 @router.post("/cv/parse-file")
 async def parse_cv_file(request: Request, file: UploadFile = File(...)):
-    if not llm.is_configured():
-        raise HTTPException(400, "LLM is not configured on the server.")
+    sid = _sid(request)
+    if not llm.is_configured_for(sid):
+        raise HTTPException(400, llm.NEEDS_KEY_MSG)
     raw = await file.read()
     if len(raw) > MAX_UPLOAD_BYTES:
         raise HTTPException(413, "File too large (max 8 MB)")
@@ -186,13 +190,9 @@ async def parse_cv_file(request: Request, file: UploadFile = File(...)):
             raise HTTPException(422, "Could not extract text from this PDF.")
     else:
         text = raw.decode("utf-8", errors="ignore")
-    filename = file.filename
-    sub = task_queue.submit(
-        "cv-parse",
-        lambda: {"experiences": cv.parse_cv(text), "text_chars": len(text), "filename": filename},
-        sid=_sid(request),
+    return task_queue.submit(
+        "cv-parse", _parse_job_fn(sid, text, {"filename": file.filename}), sid=sid
     )
-    return sub
 
 
 @router.post("/cv/confirm")
@@ -226,7 +226,8 @@ def _match_experiences_job(sid: str, job_id: str) -> dict:
         ).fetchall()
 
     job = app_row.get("job_data") or {}
-    result = cv.match_experiences_to_job(job, experiences)
+    with llm.for_session(sid):
+        result = cv.match_experiences_to_job(job, experiences)
     if result is None:
         raise RuntimeError("LLM matching failed. Try again.")
 
@@ -255,9 +256,9 @@ def _match_experiences_job(sid: str, job_id: str) -> dict:
 
 @router.post("/match/experiences/{job_id}")
 def match_experiences(request: Request, job_id: str):
-    if not llm.is_configured():
-        raise HTTPException(400, "LLM is not configured on the server.")
     sid = _sid(request)
+    if not llm.is_configured_for(sid):
+        raise HTTPException(400, llm.NEEDS_KEY_MSG)
     return task_queue.submit("exp-match", lambda: _match_experiences_job(sid, job_id), sid=sid)
 
 
@@ -346,11 +347,12 @@ def _tailor_job(sid: str, job_id: str) -> dict:
         ).fetchall()
 
     job = app_row.get("job_data") or {}
-    result = cvgen.generate_for_job(
-        job, app_row["id"], experiences, sid=sid,
-        instructions=get_session_setting(sid, "cv_instructions"),
-        profile=load_profile(sid),
-    )
+    with llm.for_session(sid):
+        result = cvgen.generate_for_job(
+            job, app_row["id"], experiences, sid=sid,
+            instructions=get_session_setting(sid, "cv_instructions"),
+            profile=load_profile(sid),
+        )
     if not result["compiled"]:
         raise RuntimeError(f"CV compile failed: {result.get('log', '')[:400]}")
 
@@ -370,9 +372,9 @@ def _tailor_job(sid: str, job_id: str) -> dict:
 
 @router.post("/cv/tailor/{job_id}")
 def tailor_cv(request: Request, job_id: str):
-    if not llm.is_configured():
-        raise HTTPException(400, "LLM is not configured on the server.")
     sid = _sid(request)
+    if not llm.is_configured_for(sid):
+        raise HTTPException(400, llm.NEEDS_KEY_MSG)
     return task_queue.submit("cv-tailor", lambda: _tailor_job(sid, job_id), sid=sid)
 
 

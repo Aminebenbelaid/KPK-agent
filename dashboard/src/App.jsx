@@ -559,6 +559,15 @@ const GLOBAL_SETTING_FIELDS = [
   { key: 'llm_model', label: 'LLM Model', type: 'text', placeholder: 'auto (leave blank to auto-pick an available model)' },
 ];
 
+const VISITOR_LLM_FIELDS = [
+  { key: 'llm_api_key', label: 'Your LLM API key', type: 'password',
+    placeholder: 'Groq (free at console.groq.com), OpenRouter, Kisski… any OpenAI-compatible key' },
+  { key: 'llm_base_url', label: 'Provider base URL', type: 'text',
+    placeholder: 'default: https://api.groq.com/openai/v1 · OpenRouter: https://openrouter.ai/api/v1' },
+  { key: 'llm_model_session', label: 'Model', type: 'text',
+    placeholder: 'auto — e.g. llama-3.3-70b-versatile (Groq)' },
+];
+
 const SESSION_SETTING_FIELDS = [
   { key: 'cv_instructions', label: 'CV prompt add-ons', type: 'textarea',
     placeholder: 'Extra guidance applied when tailoring your CV — e.g. "emphasise leadership and metrics", "keep it to one page", "use British spelling".' },
@@ -667,7 +676,7 @@ function SettingsPanel() {
 
   const fields = isOwner
     ? [...SESSION_SETTING_FIELDS, ...GLOBAL_SETTING_FIELDS]
-    : SESSION_SETTING_FIELDS;
+    : [...VISITOR_LLM_FIELDS, ...SESSION_SETTING_FIELDS];
 
   const handleSave = async () => {
     const toSave = {};
@@ -695,6 +704,16 @@ function SettingsPanel() {
         {saved && <span className="settings-saved">Saved!</span>}
       </div>
       <p className="panel-hint">Your settings live in this browser's workspace. The CV photo and prompt add-ons are used when generating your documents.</p>
+      {!isOwner && (
+        <div className="card flat" style={{ marginBottom: '1.4rem' }}>
+          <p style={{ fontSize: '0.92rem' }}>
+            <b>AI features run with your own key.</b> Scraping and rule-based ranking work without one —
+            but scoring refinement, CV parsing and CV/cover-letter generation need an LLM.
+            Get a free key at <a href="https://console.groq.com" target="_blank" rel="noreferrer">console.groq.com</a>,
+            paste it below, save — done. OpenRouter, Kisski or any OpenAI-compatible provider also work.
+          </p>
+        </div>
+      )}
 
       <CvPhotoSection />
 

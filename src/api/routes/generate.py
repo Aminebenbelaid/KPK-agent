@@ -67,7 +67,8 @@ def market_report(request: Request, q: str = Query(None)):
             if q.lower() not in hay:
                 continue
         jobs.append(data)
-    return report_mod.build_report(jobs, query=q)
+    with llm.for_session(sid):
+        return report_mod.build_report(jobs, query=q)
 
 
 # ── Cover letter (queued) ──
@@ -79,10 +80,11 @@ def _make_letter(sid: str, job_id: str) -> dict:
             raise RuntimeError("Job not found")
         experiences = _all_experiences(conn, sid)
     job = app_row.get("job_data") or {}
-    result = coverletter.generate(
-        job, app_row["id"], experiences, load_profile(sid), sid=sid,
-        instructions=get_session_setting(sid, "cover_letter_instructions"),
-    )
+    with llm.for_session(sid):
+        result = coverletter.generate(
+            job, app_row["id"], experiences, load_profile(sid), sid=sid,
+            instructions=get_session_setting(sid, "cover_letter_instructions"),
+        )
     if not result.get("text"):
         raise RuntimeError("Cover letter generation failed. Try again.")
     with get_db() as conn:
@@ -100,9 +102,9 @@ def _make_letter(sid: str, job_id: str) -> dict:
 
 @router.post("/cover-letter/{job_id}")
 def make_cover_letter(request: Request, job_id: str):
-    if not llm.is_configured():
-        raise HTTPException(400, "LLM is not configured on the server.")
     sid = request.state.effective_sid
+    if not llm.is_configured_for(sid):
+        raise HTTPException(400, llm.NEEDS_KEY_MSG)
     return task_queue.submit("cover-letter", lambda: _make_letter(sid, job_id), sid=sid)
 
 
@@ -139,15 +141,16 @@ def _make_kit(sid: str, job_id: str) -> dict:
     profile = load_profile(sid)
     app_id = app_row["id"]
 
-    cv_result = cvgen.generate_for_job(
-        job, app_id, experiences, sid=sid,
-        instructions=get_session_setting(sid, "cv_instructions"),
-        profile=profile,
-    )
-    letter = coverletter.generate(
-        job, app_id, experiences, profile, sid=sid,
-        instructions=get_session_setting(sid, "cover_letter_instructions"),
-    )
+    with llm.for_session(sid):
+        cv_result = cvgen.generate_for_job(
+            job, app_id, experiences, sid=sid,
+            instructions=get_session_setting(sid, "cv_instructions"),
+            profile=profile,
+        )
+        letter = coverletter.generate(
+            job, app_id, experiences, profile, sid=sid,
+            instructions=get_session_setting(sid, "cover_letter_instructions"),
+        )
 
     sets, params = [], []
     if cv_result.get("compiled"):
@@ -171,7 +174,7 @@ def _make_kit(sid: str, job_id: str) -> dict:
 
 @router.post("/apply-kit/{job_id}")
 def apply_kit(request: Request, job_id: str):
-    if not llm.is_configured():
-        raise HTTPException(400, "LLM is not configured on the server.")
     sid = request.state.effective_sid
+    if not llm.is_configured_for(sid):
+        raise HTTPException(400, llm.NEEDS_KEY_MSG)
     return task_queue.submit("apply-kit", lambda: _make_kit(sid, job_id), sid=sid)

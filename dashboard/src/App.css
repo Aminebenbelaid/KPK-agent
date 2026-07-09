@@ -869,6 +869,17 @@ textarea.setting-input { resize: vertical; font-family: inherit; }
 .cv-emph { margin: 0.3rem 0 0 1.1rem; }
 .cv-emph li { margin-bottom: 0.25rem; }
 
+/* ── GENERIC CARD ── */
+.card {
+  background: var(--bg-white);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-sm);
+  padding: 1.1rem 1.3rem;
+}
+.card.flat { background: var(--blue-50); border-color: var(--border-blue); box-shadow: none; }
+.card h3 { font-size: 0.92rem; font-weight: 700; color: var(--blue-600); margin-bottom: 0.6rem; }
+
 /* ── CV PHOTO / ADMIN (Settings) ── */
 .photo-section { margin-bottom: 1.4rem; }
 .photo-row { display: flex; align-items: center; gap: 1rem; margin-top: 0.5rem; }

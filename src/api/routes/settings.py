@@ -9,8 +9,14 @@ router = APIRouter(prefix="/api")
 
 # Server-wide keys — only the owner session may read or change these.
 GLOBAL_KEYS = {"kisski_api_key", "kisski_base_url", "llm_model"}
-# Per-session keys — every visitor manages their own.
-SESSION_KEYS = {"cv_instructions", "cover_letter_instructions"}
+# Per-session keys — every visitor manages their own (incl. their own LLM provider).
+SESSION_KEYS = {
+    "cv_instructions", "cover_letter_instructions",
+    "llm_api_key", "llm_base_url", "llm_model_session",
+}
+# session_settings stores the visitor model under 'llm_model' (read by llm.py);
+# the API exposes it as 'llm_model_session' to avoid clashing with the global key.
+_SESSION_KEY_ALIASES = {"llm_model_session": "llm_model"}
 
 
 class SettingsBulkUpdate(BaseModel):
@@ -40,11 +46,13 @@ def get_all_settings(request: Request):
 
     with get_db() as conn:
         for key in SESSION_KEYS:
+            stored_key = _SESSION_KEY_ALIASES.get(key, key)
             row = conn.execute(
                 "SELECT value FROM session_settings WHERE session_id = ? AND key = ?",
-                (sid, key),
+                (sid, stored_key),
             ).fetchone()
             result[key] = (row["value"] if row else "") or ""
+        result["llm_api_key"] = _mask(result.get("llm_api_key", ""))
 
         if owner:
             for key in GLOBAL_KEYS:
@@ -65,10 +73,11 @@ def update_settings_bulk(request: Request, bulk: SettingsBulkUpdate):
     with get_db() as conn:
         for key, value in bulk.settings.items():
             if key in SESSION_KEYS:
+                stored_key = _SESSION_KEY_ALIASES.get(key, key)
                 conn.execute(
                     "INSERT INTO session_settings (session_id, key, value, updated_at) VALUES (?, ?, ?, ?) "
                     "ON CONFLICT(session_id, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
-                    (sid, key, value, now),
+                    (sid, stored_key, value, now),
                 )
                 saved.append(key)
             elif key in GLOBAL_KEYS:

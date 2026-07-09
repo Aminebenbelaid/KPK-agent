@@ -1,9 +1,14 @@
-"""Optional LLM refinement of job match scores via the Kisski (OpenAI-compatible) API.
+"""LLM access layer (any OpenAI-compatible provider) with per-session credentials.
 
-This is the second half of the hybrid engine. If a Kisski API key is configured
-(in the settings table or environment), we ask the model to read the job and the
-candidate profile and return a 0-100 score plus a one/two-sentence explanation.
-If the key is missing or the call fails, callers fall back to the rule-based score.
+Two credential scopes:
+  * OWNER / server scope — the Kisski key configured by the admin (settings table
+    or env). Used only by the owner workspace.
+  * SESSION scope — visitors bring their own key (Groq, OpenRouter, Kisski, …)
+    stored in their session settings. No key -> AI features are unavailable for
+    that visitor (rule-based features keep working).
+
+Callers wrap LLM work in ``with llm.for_session(sid):`` — everything below
+(``chat``, ``is_configured``, ``llm_refine``) then uses that session's provider.
 """
 from __future__ import annotations
 
@@ -11,12 +16,27 @@ import json
 import re
 import sqlite3
 import time
+import contextvars
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Optional
 
 import requests
 
 from src.config import get_settings
+
+OWNER_SID = "owner"
+
+# Sensible defaults per provider so visitors only need to paste a key.
+PROVIDER_DEFAULT_BASE = "https://api.groq.com/openai/v1"
+PROVIDER_DEFAULT_MODELS = {
+    "groq": "llama-3.3-70b-versatile",
+    "openrouter": "meta-llama/llama-3.3-70b-instruct",
+}
+
+_UNSET = object()
+_ctx_creds: contextvars.ContextVar = contextvars.ContextVar("kpk_llm_creds", default=_UNSET)
+_session_model_cache: dict = {}
 
 # Kisski academic cloud enforces strict rate limits; space calls out and back off on 429.
 REQUEST_DELAY_SECONDS = 1.5
@@ -128,8 +148,103 @@ def get_config() -> dict:
     return {**c, "model": resolve_model()}
 
 
+# ── per-session credentials ──
+
+def _session_llm_settings(sid: str) -> dict:
+    out = {}
+    try:
+        db_path = Path(get_settings().TRACKER_DB_PATH)
+        conn = sqlite3.connect(str(db_path))
+        try:
+            rows = conn.execute(
+                "SELECT key, value FROM session_settings WHERE session_id = ? "
+                "AND key IN ('llm_api_key','llm_base_url','llm_model')",
+                (sid,),
+            ).fetchall()
+        finally:
+            conn.close()
+        out = {k: v for k, v in rows if v}
+    except sqlite3.Error:
+        pass
+    return out
+
+
+def _pick_session_model(base_url: str, api_key: str) -> str:
+    """Best-effort model pick for a visitor-provided endpoint."""
+    cache_key = (base_url, api_key[:12])
+    if cache_key in _session_model_cache:
+        return _session_model_cache[cache_key]
+    for domain, model in PROVIDER_DEFAULT_MODELS.items():
+        if domain in base_url.lower():
+            _session_model_cache[cache_key] = model
+            return model
+    try:
+        r = requests.get(f"{base_url}/models",
+                         headers={"Authorization": f"Bearer {api_key}"}, timeout=15)
+        r.raise_for_status()
+        ids = [m.get("id") for m in r.json().get("data", []) if m.get("id")]
+    except (requests.RequestException, ValueError, KeyError):
+        ids = []
+    picked = next((m for m in PREFERRED_MODELS if m in ids), ids[0] if ids else "")
+    _session_model_cache[cache_key] = picked
+    return picked
+
+
+def resolve_for_session(sid: str) -> Optional[dict]:
+    """Effective credentials for a workspace, or None if it has no usable LLM.
+
+    Owner -> the server's global (Kisski) credentials. Visitors -> their own
+    key/base/model from session settings; never the server's key.
+    """
+    if sid == OWNER_SID:
+        c = _creds()
+        if not c["api_key"]:
+            return None
+        return {**c, "model": None, "scope": "global"}  # model via resolve_model()
+
+    s = _session_llm_settings(sid)
+    api_key = (s.get("llm_api_key") or "").strip()
+    if not api_key:
+        return None
+    base = (s.get("llm_base_url") or PROVIDER_DEFAULT_BASE).strip().rstrip("/")
+    model = (s.get("llm_model") or "").strip() or _pick_session_model(base, api_key)
+    return {"api_key": api_key, "base_url": base, "model": model, "scope": "session"}
+
+
+@contextmanager
+def for_session(sid: str):
+    """Scope all LLM calls inside the block to this workspace's credentials."""
+    token = _ctx_creds.set(resolve_for_session(sid))
+    try:
+        yield
+    finally:
+        _ctx_creds.reset(token)
+
+
+def effective_creds() -> Optional[dict]:
+    ctx = _ctx_creds.get()
+    if ctx is _UNSET:
+        c = _creds()
+        if not c["api_key"]:
+            return None
+        return {**c, "model": None, "scope": "global"}
+    return ctx  # dict, or None when the session has no key
+
+
 def is_configured() -> bool:
-    return bool(_creds()["api_key"])
+    """Is an LLM available in the CURRENT scope (session context or global)?"""
+    return effective_creds() is not None
+
+
+def is_configured_for(sid: str) -> bool:
+    return resolve_for_session(sid) is not None
+
+
+NEEDS_KEY_MSG = (
+    "AI features need your own LLM API key. Add one in Settings — any "
+    "OpenAI-compatible provider works (Groq is free: console.groq.com; also "
+    "OpenRouter, Kisski, …). Scraping and rule-based ranking work without a key."
+)
 
 
 def _profile_summary(profile: dict) -> str:
@@ -221,17 +336,18 @@ def chat(messages, max_tokens: int = 400, temperature: float = 0.2,
     Returns the assistant message content, or None on failure. Handles 429
     rate-limiting with exponential backoff.
     """
-    c = _creds()
-    if not c["api_key"]:
+    eff = effective_creds()
+    if not eff:
         return None
-    model = resolve_model()
+    model = eff.get("model") or resolve_model()
+    can_reresolve = eff.get("scope") == "global"  # catalog self-healing is Kisski-specific
     model_retried = False
     for attempt in range(MAX_RETRIES):
         try:
             resp = requests.post(
-                f"{c['base_url']}/chat/completions",
+                f"{eff['base_url']}/chat/completions",
                 headers={
-                    "Authorization": f"Bearer {c['api_key']}",
+                    "Authorization": f"Bearer {eff['api_key']}",
                     "Content-Type": "application/json",
                 },
                 json={
@@ -245,11 +361,21 @@ def chat(messages, max_tokens: int = 400, temperature: float = 0.2,
             if resp.status_code == 429:
                 time.sleep(2 ** attempt * 2)
                 continue
-            if resp.status_code == 404 and not model_retried:
+            if resp.status_code == 404 and can_reresolve and not model_retried:
                 # Model vanished from the catalog — re-resolve and retry once.
                 model_retried = True
                 model = resolve_model(force=True)
                 continue
+            if resp.status_code >= 500 and can_reresolve and not model_retried:
+                # Provider-side failure for this model — try the next preferred one.
+                model_retried = True
+                available = list_models()
+                fallback = next(
+                    (m for m in PREFERRED_MODELS if m in available and m != model), None
+                )
+                if fallback:
+                    model = fallback
+                    continue
             resp.raise_for_status()
             return resp.json()["choices"][0]["message"]["content"]
         except (requests.RequestException, KeyError, ValueError, IndexError):

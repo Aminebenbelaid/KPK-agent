@@ -130,6 +130,11 @@ def _prior_details(row) -> dict:
 
 
 def _run_scoring(task_id: str, sid: str, only_unscored: bool, use_llm: bool):
+    with llm.for_session(sid):
+        _run_scoring_scoped(task_id, sid, only_unscored, use_llm)
+
+
+def _run_scoring_scoped(task_id: str, sid: str, only_unscored: bool, use_llm: bool):
     task = _score_tasks[task_id]
     try:
         task["status"] = "running"
@@ -204,7 +209,7 @@ def trigger_scoring(request: Request, req: ScoreRunRequest):
         "llm_total": 0,
         "llm_done": 0,
         "only_unscored": req.only_unscored,
-        "llm_used": req.use_llm and llm.is_configured(),
+        "llm_used": req.use_llm and llm.is_configured_for(sid),
         "started_at": datetime.now(timezone.utc).isoformat(),
         "error": None,
         "queue_id": None,
@@ -217,7 +222,7 @@ def trigger_scoring(request: Request, req: ScoreRunRequest):
     _score_tasks[task_id]["queue_id"] = sub["task_id"]
     return {
         "task_id": task_id, "status": "queued", "position": sub["position"],
-        "llm_available": llm.is_configured(),
+        "llm_available": llm.is_configured_for(sid),
     }
 
 
@@ -243,12 +248,12 @@ def scoring_overview(request: Request):
             (sid,),
         ).fetchone()["c"]
     return {
-        "llm_available": llm.is_configured(),
+        "llm_available": llm.is_configured_for(sid),
         "total_jobs": total,
         "scored_jobs": scored,
         "unscored_jobs": total - scored,
         "tasks": {
             k: {"status": v["status"], "done": v["done"], "total": v["total"]}
-            for k, v in _score_tasks.items()
+            for k, v in _score_tasks.items() if v.get("sid") == sid
         },
     }
