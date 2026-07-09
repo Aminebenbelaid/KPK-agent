@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>KeinplanKarriere — Technical Deep Dive</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --bg:#F8FAFE; --bg-white:#FFFFFF; --text:#1A1D26; --text-s:#6B7080; --text-t:#9CA3B0;
+    --blue-50:#EEF4FF; --blue-100:#D9E6FF; --blue-400:#5B8DEF; --blue-500:#3B6FE0; --blue-600:#2B5BC4; --blue-700:#1E429A;
+    --green:#1A7A3A; --green-bg:#E8F8EE; --red:#D93025; --red-bg:#FDE8E8; --amber:#8A6114; --amber-bg:#FEF4E0;
+    --border:rgba(0,0,0,.07); --border-blue:rgba(59,111,224,.16);
+    --shadow-sm:0 1px 3px rgba(0,0,0,.04),0 1px 2px rgba(0,0,0,.02);
+    --shadow-md:0 6px 22px rgba(0,0,0,.06),0 1px 3px rgba(0,0,0,.04);
+    --r:20px; --r-md:14px; --r-sm:10px; --pill:100px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{
+    background:var(--bg); color:var(--text);
+    font-family:'Plus Jakarta Sans',-apple-system,Segoe UI,sans-serif;
+    -webkit-font-smoothing:antialiased; line-height:1.5;
+  }
+  .deck{height:100vh; overflow-y:scroll; scroll-snap-type:y mandatory; scroll-behavior:smooth}
+  .slide{
+    min-height:100vh; scroll-snap-align:start; scroll-snap-stop:always;
+    padding:5.5vh 7vw 7vh; display:flex; flex-direction:column; justify-content:center;
+    position:relative;
+  }
+  .slide.dark{background:var(--text); color:#fff}
+  .wordmark{position:absolute; top:4vh; right:7vw; font-weight:800; font-size:15px; letter-spacing:-.02em; color:var(--text-s)}
+  .wordmark b{color:var(--blue-500)}
+  .dark .wordmark{color:#8b93a7}
+  .dark .wordmark b{color:var(--blue-400)}
+
+  .eyebrow{font-size:13px; font-weight:700; letter-spacing:.16em; text-transform:uppercase; color:var(--blue-500); margin-bottom:14px}
+  .num{display:inline-flex; align-items:center; justify-content:center; width:34px;height:34px;border-radius:50%;
+       background:var(--blue-500); color:#fff; font-weight:700; font-size:16px; margin-right:12px; vertical-align:middle}
+  h1{font-size:clamp(34px,5vw,60px); font-weight:800; letter-spacing:-.03em; line-height:1.05}
+  h2{font-size:clamp(26px,3.4vw,40px); font-weight:800; letter-spacing:-.02em; line-height:1.1}
+  h2 .lead{color:var(--blue-500)}
+  .sub{font-size:clamp(16px,1.7vw,21px); color:var(--text-s); margin-top:16px; max-width:60ch}
+  .dark .sub{color:#aab2c5}
+  p{font-size:17px}
+  .muted{color:var(--text-s)}
+
+  .topics{display:flex; gap:14px; margin-top:42px; flex-wrap:wrap}
+  .topic{border:1px solid #2d3340; border-radius:var(--r-md); padding:14px 18px; min-width:170px}
+  .topic .t-n{font-family:'JetBrains Mono',monospace; color:var(--blue-400); font-weight:600; font-size:14px}
+  .topic .t-l{color:#e6e9f0; font-weight:600; margin-top:4px}
+
+  .grid{display:grid; gap:22px; margin-top:30px}
+  .cols-2{grid-template-columns:1fr 1fr}
+  .cols-12{grid-template-columns:1.15fr .85fr}
+  .stack{display:flex; flex-direction:column; gap:18px}
+
+  .card{background:var(--bg-white); border:1px solid var(--border); border-radius:var(--r-md); box-shadow:var(--shadow-sm); padding:22px 24px}
+  .card.flat{background:var(--blue-50); border-color:var(--border-blue); box-shadow:none}
+  .card h3{font-size:15px; font-weight:700; color:var(--blue-600); margin-bottom:10px; letter-spacing:.01em}
+  .card p{font-size:15.5px; color:var(--text)}
+  .lbl{font-weight:700; color:var(--blue-600)}
+
+  ul.clean{list-style:none; display:flex; flex-direction:column; gap:9px}
+  ul.clean li{font-size:15.5px; padding-left:20px; position:relative}
+  ul.clean li::before{content:""; position:absolute; left:0; top:9px; width:7px;height:7px;border-radius:50%; background:var(--blue-400)}
+
+  /* pipeline */
+  .flow{display:flex; align-items:stretch; gap:0; margin-top:8px; flex-wrap:wrap}
+  .step{background:var(--bg-white); border:1px solid var(--border); border-left:4px solid var(--blue-500);
+        border-radius:var(--r-sm); box-shadow:var(--shadow-sm); padding:16px 18px; flex:1; min-width:165px}
+  .step .s-t{font-weight:700; font-size:16px}
+  .step .s-d{color:var(--text-s); font-size:13.5px; margin-top:5px}
+  .arrow{display:flex; align-items:center; padding:0 10px; color:var(--blue-400); font-size:22px; font-weight:700}
+  .phase{font-family:'JetBrains Mono',monospace; font-size:12.5px; letter-spacing:.12em; text-transform:uppercase; color:var(--text-t); margin:22px 0 10px}
+
+  /* code */
+  pre{background:var(--blue-50); border:1px solid var(--border-blue); border-radius:var(--r-md);
+      padding:20px 22px; font-family:'JetBrains Mono',monospace; font-size:14px; line-height:1.7; color:#28324a; overflow:auto}
+  pre .c{color:var(--blue-600)}
+  pre .k{color:var(--blue-700); font-weight:600}
+
+  /* tags */
+  .tags{display:flex; gap:9px; flex-wrap:wrap; margin-top:6px}
+  .tag{border-radius:var(--pill); padding:7px 15px; font-weight:700; font-size:14.5px; color:#fff; background:var(--blue-500)}
+  .src{border-radius:var(--pill); padding:5px 13px; font-weight:700; font-size:13px; color:#fff}
+  .src.li{background:#3B6FE0}.src.ss{background:#1A7A3A}.src.xi{background:#0D6856}.src.ar{background:#D93025}
+
+  .quote{font-style:italic; color:var(--text); font-size:16px}
+  .center-arrow{text-align:center; color:var(--blue-500); font-weight:700; margin:8px 0; font-size:15px}
+
+  /* scoring bars */
+  .bars{display:flex; flex-direction:column; gap:11px; margin-top:6px}
+  .bar-row{display:grid; grid-template-columns:96px 1fr 42px; align-items:center; gap:12px}
+  .bar-row .bl{font-size:14.5px; font-weight:600}
+  .track{height:16px; background:var(--blue-50); border-radius:var(--pill); overflow:hidden}
+  .fill{height:100%; background:var(--blue-500); border-radius:var(--pill)}
+  .bar-row .bv{font-family:'JetBrains Mono',monospace; font-size:14px; color:var(--text-s); text-align:right}
+
+  .panel{background:var(--text); color:#fff; border-radius:var(--r-md); padding:22px 24px}
+  .panel h3{color:var(--blue-400); font-size:16px; margin-bottom:12px}
+  .panel ul.clean li{color:#dfe3ec}
+  .panel ul.clean li::before{background:var(--blue-400)}
+  .panel .note{color:#aab2c5; font-style:italic; font-size:14px; margin-top:14px}
+
+  /* principles */
+  .principles{display:grid; grid-template-columns:1fr 1fr; gap:18px; margin-top:34px}
+  .pr{background:#22262f; border-left:4px solid var(--blue-500); border-radius:var(--r-sm); padding:18px 20px}
+  .pr h3{color:var(--blue-400); font-size:18px; margin-bottom:7px}
+  .pr p{color:#c4cad6; font-size:15px}
+
+  /* nav */
+  .hud{position:fixed; bottom:18px; right:22px; font-family:'JetBrains Mono',monospace; font-size:12.5px;
+       color:var(--text-t); background:rgba(255,255,255,.7); backdrop-filter:blur(6px); padding:5px 11px; border-radius:var(--pill); border:1px solid var(--border)}
+  .progress{position:fixed; top:0; left:0; height:3px; background:var(--blue-500); width:0; transition:width .25s; z-index:10}
+  .hint{position:fixed; bottom:18px; left:22px; font-size:12.5px; color:var(--text-t)}
+
+  @media print{
+    .deck{height:auto; overflow:visible}
+    .slide{min-height:auto; page-break-after:always; padding:8% 7%}
+    .hud,.hint,.progress{display:none}
+  }
+</style>
+</head>
+<body>
+<div class="progress" id="progress"></div>
+<div class="deck" id="deck">
+
+  <!-- 1 — TITLE -->
+  <section class="slide dark">
+    <div class="wordmark">keinplan<b>karriere</b></div>
+    <div class="eyebrow" style="color:var(--blue-400)">Technical deep-dive</div>
+    <h1>How the matching<br>engine works</h1>
+    <div class="sub">Fuzzy deduplication, skill &amp; experience extraction, and hybrid scoring — under the hood.</div>
+    <div class="topics">
+      <div class="topic"><div class="t-n">01</div><div class="t-l">Deduplication</div></div>
+      <div class="topic"><div class="t-n">02</div><div class="t-l">Skill extraction</div></div>
+      <div class="topic"><div class="t-n">03</div><div class="t-l">Experience extraction</div></div>
+      <div class="topic"><div class="t-n">04</div><div class="t-l">Hybrid scoring</div></div>
+    </div>
+    <div class="muted" style="margin-top:38px;color:#8b93a7;font-size:14px">~5 minute walkthrough</div>
+  </section>
+
+  <!-- 2 — PIPELINE -->
+  <section class="slide">
+    <div class="wordmark">keinplan<b>karriere</b></div>
+    <div class="eyebrow">Where everything fits</div>
+    <h2>The pipeline</h2>
+
+    <div class="phase">Ingestion — per scraped job</div>
+    <div class="flow">
+      <div class="step"><div class="s-t">Scrape</div><div class="s-d">4 boards, with full descriptions</div></div>
+      <div class="arrow">→</div>
+      <div class="step"><div class="s-t">Extract skills</div><div class="s-d">taxonomy + regex</div></div>
+      <div class="arrow">→</div>
+      <div class="step"><div class="s-t">Deduplicate</div><div class="s-d">fuzzy match across sources</div></div>
+      <div class="arrow">→</div>
+      <div class="step"><div class="s-t">Store</div><div class="s-d">SQLite — one row per job</div></div>
+    </div>
+
+    <div class="phase">Matching — scoring pass</div>
+    <div class="flow">
+      <div class="step" style="border-left-color:var(--blue-400)"><div class="s-t">Candidate</div><div class="s-d">experience base → skills &amp; preferences</div></div>
+      <div class="arrow">+</div>
+      <div class="step" style="border-left-color:var(--blue-400)"><div class="s-t">Job</div><div class="s-d">title · description · extracted skills</div></div>
+      <div class="arrow">→</div>
+      <div class="step" style="border-left-color:var(--blue-600)"><div class="s-t">Rule score</div><div class="s-d">0–100, instant &amp; free</div></div>
+      <div class="arrow">→</div>
+      <div class="step" style="border-left-color:var(--blue-600)"><div class="s-t">LLM refine</div><div class="s-d">top-N only, + explanation</div></div>
+    </div>
+  </section>
+
+  <!-- 3 — DEDUP -->
+  <section class="slide">
+    <div class="wordmark">keinplan<b>karriere</b></div>
+    <div class="eyebrow"><span class="num">1</span>Fuzzy deduplication</div>
+    <h2>Same job, <span class="lead">four boards</span></h2>
+    <div class="grid cols-12">
+      <div class="stack">
+        <div><span class="lbl">The problem.</span> One role gets posted on
+          <span class="src li">LinkedIn</span> <span class="src ss">StepStone</span>
+          <span class="src xi">Xing</span> <span class="src ar">Arbeitsagentur</span> — four near-identical rows.</div>
+        <div><span class="lbl">Normalize first.</span> lower-case; strip gender markers (m/w/d), company suffixes (GmbH, AG, SE) and punctuation.</div>
+        <div><span class="lbl">Compare with difflib.</span> <code>SequenceMatcher</code> ratio on title + company — Python standard library, zero dependencies, fully deterministic.</div>
+      </div>
+      <div class="stack">
+        <pre><span class="c"># on normalized title + company</span>
+title_sim   = ratio(a.title,   b.title)
+company_sim = ratio(a.company, b.company)
+
+<span class="k">is_dup</span> = title_sim   &gt;= 0.82 <span class="k">and</span>
+         company_sim &gt;= 0.80</pre>
+        <div class="card flat">
+          <p><b>Confidence = 0.6 · title + 0.4 · company.</b> Only cross-source pairs merge into one row (recorded in <code>also_on</code>); a board updating its own posting is handled by the job-id upsert.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 4 — SKILLS -->
+  <section class="slide">
+    <div class="wordmark">keinplan<b>karriere</b></div>
+    <div class="eyebrow"><span class="num">2</span>Skill extraction</div>
+    <h2>From description <span class="lead">to tags</span></h2>
+    <div class="grid cols-12">
+      <div class="stack">
+        <div><span class="lbl">Curated taxonomy.</span> ~70 canonical skills, each with aliases — React / ReactJS / React.js all map to “React”. English + German.</div>
+        <div><span class="lbl">Word-boundary regex.</span> one pre-compiled pattern per skill, so “Java” ≠ “JavaScript” and “Go” ≠ “Google”.</div>
+        <div><span class="lbl">Runs at ingestion.</span> scans the title + the full scraped description, then normalizes the result onto the job.</div>
+      </div>
+      <div class="stack">
+        <div class="card">
+          <div class="quote">“…REST APIs in <b>Python</b> and <b>Django</b>, deployed on <b>AWS</b> with <b>Docker</b>…”</div>
+          <div class="center-arrow">↓ extract</div>
+          <div class="tags">
+            <span class="tag">Python</span><span class="tag">Django</span><span class="tag">REST</span>
+            <span class="tag">AWS</span><span class="tag">Docker</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 5 — EXPERIENCE -->
+  <section class="slide">
+    <div class="wordmark">keinplan<b>karriere</b></div>
+    <div class="eyebrow"><span class="num">3</span>Experience extraction</div>
+    <h2>Your CV → <span class="lead">structured experience</span></h2>
+    <div class="flow" style="margin-top:6px">
+      <div class="step"><div class="s-t">01 · Input</div><div class="s-d">CV PDF (pypdf) or pasted LaTeX / text</div></div>
+      <div class="arrow">→</div>
+      <div class="step"><div class="s-t">02 · LLM parse</div><div class="s-d">→ JSON: title, org, stack, dates, summary, tags</div></div>
+      <div class="arrow">→</div>
+      <div class="step"><div class="s-t">03 · Review</div><div class="s-d">human-in-the-loop popup before save</div></div>
+      <div class="arrow">→</div>
+      <div class="step"><div class="s-t">04 · Store</div><div class="s-d">experience base drives matching</div></div>
+    </div>
+    <div class="grid cols-2">
+      <div class="card flat">
+        <h3>Two ways in</h3>
+        <ul class="clean">
+          <li>Upload a CV → AI parses every role &amp; project</li>
+          <li>Add manually → AI infers the type, tags &amp; stack</li>
+          <li>You review and edit before anything is saved</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>Made robust</h3>
+        <ul class="clean">
+          <li>Non-reasoning model — emits JSON, not “thinking”</li>
+          <li>Tolerant JSON extraction + schema validation</li>
+          <li>Self-healing: auto-picks an available model</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- 6 — SCORING -->
+  <section class="slide">
+    <div class="wordmark">keinplan<b>karriere</b></div>
+    <div class="eyebrow"><span class="num">4</span>Hybrid scoring</div>
+    <h2>Deterministic first, <span class="lead">LLM where it counts</span></h2>
+    <div class="grid cols-2">
+      <div>
+        <div class="phase" style="margin-top:6px">Layer 1 — rule score · every job · instant · free</div>
+        <div class="bars">
+          <div class="bar-row"><span class="bl">Skills</span><div class="track"><div class="fill" style="width:100%"></div></div><span class="bv">45</span></div>
+          <div class="bar-row"><span class="bl">Role</span><div class="track"><div class="fill" style="width:44%"></div></div><span class="bv">20</span></div>
+          <div class="bar-row"><span class="bl">Location</span><div class="track"><div class="fill" style="width:22%"></div></div><span class="bv">10</span></div>
+          <div class="bar-row"><span class="bl">Remote</span><div class="track"><div class="fill" style="width:22%"></div></div><span class="bv">10</span></div>
+          <div class="bar-row"><span class="bl">Seniority</span><div class="track"><div class="fill" style="width:22%"></div></div><span class="bv">10</span></div>
+          <div class="bar-row"><span class="bl">Salary</span><div class="track"><div class="fill" style="width:11%"></div></div><span class="bv">5</span></div>
+        </div>
+        <p class="muted" style="font-size:14px;margin-top:16px;font-style:italic">Skills = the share of the <b>job’s</b> requirements the candidate has → more experience only ever helps.</p>
+      </div>
+      <div class="panel">
+        <h3>Layer 2 — LLM refinement</h3>
+        <ul class="clean">
+          <li>only the top-N rule candidates</li>
+          <li>re-scored 0–100, grounded in the real experiences</li>
+          <li>returns a written explanation</li>
+          <li>rate-limited (1.5 s + 429 back-off)</li>
+          <li>falls back to the rule score on any failure</li>
+        </ul>
+        <div class="note">Plus a separate call that ranks which experiences to emphasize per job.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 7 — PRINCIPLES -->
+  <section class="slide dark">
+    <div class="wordmark">keinplan<b>karriere</b></div>
+    <div class="eyebrow" style="color:var(--blue-400)">Design principles</div>
+    <h2 style="color:#fff">What ties it together</h2>
+    <div class="principles">
+      <div class="pr"><h3>Deterministic first</h3><p>Dedup, skills and the base score need no LLM — fast, free, reproducible.</p></div>
+      <div class="pr"><h3>LLM where it judges</h3><p>Reserved for parsing CVs, refining the top matches and explaining them.</p></div>
+      <div class="pr"><h3>Always grounded</h3><p>Scores and CVs come from real, reviewed experience — no fabrication.</p></div>
+      <div class="pr"><h3>Resilient by design</h3><p>Standard-library core, fallbacks everywhere, self-healing model choice.</p></div>
+    </div>
+  </section>
+
+</div>
+
+<div class="hud" id="hud">1 / 7</div>
+<div class="hint">→ / space to advance · F for fullscreen</div>
+
+<script>
+  const deck = document.getElementById('deck');
+  const slides = [...document.querySelectorAll('.slide')];
+  const hud = document.getElementById('hud');
+  const progress = document.getElementById('progress');
+  let i = 0;
+
+  function go(n){
+    i = Math.max(0, Math.min(slides.length - 1, n));
+    slides[i].scrollIntoView({behavior:'smooth'});
+    hud.textContent = (i+1) + ' / ' + slides.length;
+    progress.style.width = ((i+1)/slides.length*100) + '%';
+  }
+  function syncFromScroll(){
+    const idx = Math.round(deck.scrollTop / window.innerHeight);
+    if(idx !== i){ i = idx; hud.textContent = (i+1)+' / '+slides.length; progress.style.width = ((i+1)/slides.length*100)+'%'; }
+  }
+  deck.addEventListener('scroll', () => window.requestAnimationFrame(syncFromScroll));
+  document.addEventListener('keydown', e => {
+    if(['ArrowRight','ArrowDown',' ','PageDown'].includes(e.key)){ e.preventDefault(); go(i+1); }
+    else if(['ArrowLeft','ArrowUp','PageUp'].includes(e.key)){ e.preventDefault(); go(i-1); }
+    else if(e.key === 'Home'){ e.preventDefault(); go(0); }
+    else if(e.key === 'End'){ e.preventDefault(); go(slides.length-1); }
+    else if(e.key.toLowerCase() === 'f'){ if(!document.fullscreenElement) document.documentElement.requestFullscreen(); else document.exitFullscreen(); }
+  });
+  progress.style.width = (1/slides.length*100)+'%';
+</script>
+</body>
+</html>
