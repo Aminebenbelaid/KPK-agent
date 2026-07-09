@@ -201,13 +201,14 @@
     <div class="wordmark">keinplan<b>karriere</b></div>
     <div class="eyebrow" style="color:var(--blue-400)">Shipped this sprint</div>
     <h2 style="color:#fff">Public. Multi-user. <span class="lead">Try it right now.</span></h2>
-    <div class="grid cols-3" style="margin-top:30px">
+    <div class="grid cols-4" style="margin-top:30px">
       <div class="pr"><h3>Cloudflare Tunnel</h3><p>Served from a small home desktop, exposed safely over HTTPS — no open ports, auto-restarting.</p></div>
       <div class="pr"><h3>A workspace per visitor</h3><p>Cookie sessions: your jobs, experiences, documents and settings are yours alone. Idle workspaces auto-clean after 48 h.</p></div>
+      <div class="pr"><h3>Bring your own AI</h3><p>Visitors paste their own LLM key (Groq is free, OpenRouter, …) — the host's credentials are never shared or exposed.</p></div>
       <div class="pr"><h3>Fair-use queue</h3><p>All heavy work runs through one serial worker with live “#2 in line” feedback — many users, one small machine, no meltdown.</p></div>
     </div>
     <div class="url-badge">https://keinplankarriere.qantra.dev</div>
-    <p class="muted" style="margin-top:14px; font-size:14px">Owner data and server API keys sit behind an admin key — visitors can never see them.</p>
+    <p class="muted" style="margin-top:14px; font-size:14px">Scraping and rule-based ranking work with no key at all; the owner workspace sits behind an admin key.</p>
   </section>
 
   <!-- 8 ENGINEERING -->
@@ -218,7 +219,7 @@
     <div class="grid cols-2">
       <div class="card">
         <h3>The stack</h3>
-        <p>FastAPI + SQLite · React + Vite · pure requests/BeautifulSoup scrapers · Tectonic for LaTeX→PDF · Kisski LLM (Llama-class) · one Docker compose, two containers.</p>
+        <p>FastAPI + SQLite · React + Vite · pure requests/BeautifulSoup scrapers · Tectonic for LaTeX→PDF · any OpenAI-compatible LLM (Kisski, Groq, OpenRouter, …) · one Docker compose, two containers.</p>
       </div>
       <div class="card flat">
         <h3>Resilience, learned the hard way</h3>
