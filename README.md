@@ -6,9 +6,13 @@
 >
 > It prepares the application — **you** press submit. This is not an auto-apply bot.
 
-**🌐 Project website:** https://aminebenbelaid.github.io/KPK-agent/
-**🚀 Live demo:** __DEMO_URL__
+**🌐 Project website:** https://aminebenbelaid.github.io/KPK-agent/ — includes a self-running product walkthrough
+**▶️ Run it yourself:** [one command with Docker](#quick-start-docker)
 **📄 Pitch deck:** [`docs/KeinplanKarriere-Pitch.pdf`](docs/KeinplanKarriere-Pitch.pdf)
+
+> **Why there is no public instance:** the agent scrapes job boards from your IP, stores your CV and
+> generated documents locally, and calls an AI provider with your own key. Running it yourself keeps
+> all three under your control — and it takes one command.
 
 ![The KeinplanKarriere dashboard](docs/assets/01-jobs.png)
 
