@@ -1,0 +1,668 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>KeinplanKarriere — an AI agent that makes job applications easier</title>
+<meta name="description" content="KeinplanKarriere is an AI career agent for the German job market: it collects job postings from four boards, ranks them against your real experience with an explainable score, and writes a tailored CV and cover letter for each one. You stay in control of what gets sent." />
+<meta property="og:title" content="KeinplanKarriere — an AI agent that makes job applications easier" />
+<meta property="og:description" content="Finds German tech jobs, ranks them against your real experience, and drafts a tailored CV + cover letter per job. Not an auto-apply bot." />
+<meta property="og:type" content="website" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --bg:#F8FAFE; --bg-white:#FFFFFF; --text:#1A1D26; --text-s:#5C6270; --text-t:#9CA3B0;
+    --blue-50:#EEF4FF; --blue-100:#D9E6FF; --blue-400:#5B8DEF; --blue-500:#3B6FE0;
+    --blue-600:#2B5BC4; --blue-700:#1E429A;
+    --green:#1A7A3A; --green-bg:#E8F8EE; --red:#C0392B; --red-bg:#FDECEA; --amber:#8A6114; --amber-bg:#FEF4E0;
+    --border:rgba(16,24,40,.08); --border-blue:rgba(59,111,224,.18);
+    --sh-sm:0 1px 3px rgba(16,24,40,.04), 0 1px 2px rgba(16,24,40,.03);
+    --sh-md:0 8px 28px rgba(16,24,40,.07), 0 2px 6px rgba(16,24,40,.04);
+    --sh-lg:0 24px 60px rgba(16,24,40,.12), 0 6px 16px rgba(16,24,40,.05);
+    --r:18px; --r-sm:11px; --pill:999px;
+    --max:1120px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth; scroll-padding-top:80px}
+  body{background:var(--bg); color:var(--text); line-height:1.62;
+    font-family:'Plus Jakarta Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+    -webkit-font-smoothing:antialiased;}
+  img{max-width:100%; display:block}
+  a{color:var(--blue-600)}
+  code,.mono{font-family:'JetBrains Mono',ui-monospace,monospace}
+
+  .wrap{max-width:var(--max); margin:0 auto; padding:0 24px}
+  section{padding:84px 0}
+  .eyebrow{font-size:12.5px; font-weight:700; letter-spacing:.15em; text-transform:uppercase; color:var(--blue-500); margin-bottom:14px}
+  h1{font-size:clamp(34px,5.2vw,62px); font-weight:800; letter-spacing:-.03em; line-height:1.03}
+  h2{font-size:clamp(26px,3.4vw,40px); font-weight:800; letter-spacing:-.022em; line-height:1.14}
+  h3{font-size:17px; font-weight:700; letter-spacing:-.01em}
+  .lead{color:var(--blue-500)}
+  .sec-sub{color:var(--text-s); font-size:clamp(16px,1.6vw,19px); margin-top:14px; max-width:62ch}
+  p{color:var(--text-s)}
+  .muted{color:var(--text-t)}
+
+  /* NAV */
+  nav{position:sticky; top:0; z-index:50; background:rgba(248,250,254,.86);
+    backdrop-filter:blur(14px); border-bottom:1px solid var(--border)}
+  .nav-in{max-width:var(--max); margin:0 auto; padding:14px 24px; display:flex; align-items:center; gap:22px}
+  .brand{font-weight:800; letter-spacing:-.03em; font-size:17px; text-decoration:none; color:var(--text)}
+  .brand b{color:var(--blue-500)}
+  .nav-links{margin-left:auto; display:flex; gap:22px; align-items:center}
+  .nav-links a{color:var(--text-s); text-decoration:none; font-size:14.5px; font-weight:600}
+  .nav-links a:hover{color:var(--blue-600)}
+  .btn{display:inline-flex; align-items:center; gap:8px; border-radius:var(--pill); padding:11px 22px;
+    font-weight:700; font-size:15px; text-decoration:none; border:1px solid transparent; cursor:pointer; transition:.15s}
+  .btn-primary{background:var(--blue-500); color:#fff; box-shadow:0 6px 18px rgba(59,111,224,.28)}
+  .btn-primary:hover{background:var(--blue-600)}
+  .btn-ghost{background:var(--bg-white); color:var(--text); border-color:var(--border); box-shadow:var(--sh-sm)}
+  .btn-ghost:hover{border-color:var(--border-blue); color:var(--blue-600)}
+  .btn-sm{padding:9px 17px; font-size:14px}
+  @media (max-width:860px){ .nav-links a:not(.btn){display:none} }
+
+  /* HERO */
+  .hero{padding:76px 0 40px}
+  .hero-grid{display:grid; grid-template-columns:1.02fr .98fr; gap:52px; align-items:center}
+  .hero p.tagline{font-size:clamp(16.5px,1.7vw,20px); margin-top:20px; max-width:54ch}
+  .hero-cta{display:flex; gap:12px; flex-wrap:wrap; margin-top:30px}
+  .hero-note{margin-top:16px; font-size:13.5px; color:var(--text-t)}
+  @media (max-width:960px){ .hero-grid{grid-template-columns:1fr; gap:36px} }
+
+  /* browser frame */
+  .frame{background:var(--bg-white); border:1px solid var(--border); border-radius:14px;
+    box-shadow:var(--sh-lg); overflow:hidden}
+  .frame-bar{display:flex; align-items:center; gap:7px; padding:11px 14px; background:#F1F4F9; border-bottom:1px solid var(--border)}
+  .dot{width:10px;height:10px;border-radius:50%}
+  .frame-url{margin-left:10px; font-size:11.5px; color:var(--text-t); font-family:'JetBrains Mono',monospace}
+  .frame img{width:100%}
+
+  .stats{display:grid; grid-template-columns:repeat(4,1fr); gap:16px; margin-top:56px}
+  .stat{background:var(--bg-white); border:1px solid var(--border); border-radius:var(--r-sm); padding:18px 20px; box-shadow:var(--sh-sm)}
+  .stat .n{font-size:26px; font-weight:800; color:var(--blue-600); letter-spacing:-.02em; line-height:1.15}
+  .stat .l{font-size:13px; color:var(--text-s); margin-top:4px}
+  @media (max-width:760px){ .stats{grid-template-columns:1fr 1fr} }
+
+  /* generic cards */
+  .grid{display:grid; gap:20px; margin-top:40px}
+  .g2{grid-template-columns:1fr 1fr}
+  .g3{grid-template-columns:repeat(3,1fr)}
+  .g4{grid-template-columns:repeat(4,1fr)}
+  @media (max-width:900px){ .g3,.g4{grid-template-columns:1fr 1fr} }
+  @media (max-width:680px){ .g2,.g3,.g4{grid-template-columns:1fr} }
+  .card{background:var(--bg-white); border:1px solid var(--border); border-radius:var(--r); padding:26px; box-shadow:var(--sh-sm)}
+  .card.tint{background:var(--blue-50); border-color:var(--border-blue); box-shadow:none}
+  .card h3{margin-bottom:9px}
+  .card p{font-size:15px}
+  .icon{width:38px;height:38px;border-radius:11px; background:var(--blue-50); color:var(--blue-600);
+    display:flex; align-items:center; justify-content:center; font-weight:800; margin-bottom:14px;
+    font-family:'JetBrains Mono',monospace; font-size:14px}
+  .pain{border-left:3px solid var(--red); background:var(--red-bg); border-radius:var(--r-sm); padding:20px 22px}
+  .pain h3{color:#8E2C20; margin-bottom:6px}
+  .pain p{color:#8a4a3f; font-size:14.5px}
+
+  .band{background:var(--bg-white); border-top:1px solid var(--border); border-bottom:1px solid var(--border)}
+  .dark-band{background:var(--text); color:#fff}
+  .dark-band h2{color:#fff}
+  .dark-band p, .dark-band .sec-sub{color:#A9B1C2}
+  .dark-band .eyebrow{color:var(--blue-400)}
+  .dcard{background:#22262F; border-radius:var(--r-sm); padding:22px 24px; border-left:3px solid var(--blue-500)}
+  .dcard h3{color:var(--blue-400); margin-bottom:7px}
+  .dcard p{color:#C3CAD6; font-size:14.5px}
+
+  /* WALKTHROUGH */
+  .wt{margin-top:40px; display:grid; grid-template-columns:300px 1fr; gap:28px; align-items:start}
+  @media (max-width:900px){ .wt{grid-template-columns:1fr} }
+  .wt-steps{display:flex; flex-direction:column; gap:8px}
+  .wt-step{text-align:left; background:transparent; border:1px solid transparent; border-radius:var(--r-sm);
+    padding:14px 16px; cursor:pointer; font-family:inherit; transition:.18s; display:flex; gap:13px; align-items:flex-start}
+  .wt-step:hover{background:var(--bg-white)}
+  .wt-step.on{background:var(--bg-white); border-color:var(--border-blue); box-shadow:var(--sh-sm)}
+  .wt-num{flex-shrink:0; width:24px;height:24px;border-radius:50%; background:var(--blue-100); color:var(--blue-700);
+    font-size:12.5px; font-weight:800; display:flex; align-items:center; justify-content:center; margin-top:1px}
+  .wt-step.on .wt-num{background:var(--blue-500); color:#fff}
+  .wt-t{display:block; font-weight:700; font-size:15px; color:var(--text)}
+  .wt-d{display:block; font-size:13.5px; color:var(--text-s); margin-top:3px; line-height:1.5}
+  .wt-bar{height:3px; background:var(--blue-100); border-radius:2px; margin-top:12px; overflow:hidden}
+  .wt-fill{height:100%; width:0; background:var(--blue-500); border-radius:2px}
+  .wt-stage{position:relative}
+  .wt-stage .frame img{transition:opacity .35s ease}
+  .wt-cap{margin-top:14px; font-size:14px; color:var(--text-s); min-height:44px}
+  .wt-ctrl{display:flex; gap:8px; align-items:center; margin-top:10px}
+  .wt-ctrl button{border:1px solid var(--border); background:var(--bg-white); border-radius:var(--pill);
+    width:34px; height:34px; cursor:pointer; color:var(--text-s); font-size:15px; box-shadow:var(--sh-sm)}
+  .wt-ctrl button:hover{color:var(--blue-600); border-color:var(--border-blue)}
+  .wt-count{font-size:13px; color:var(--text-t); font-family:'JetBrains Mono',monospace; margin-left:4px}
+
+  /* ARCHITECTURE */
+  .arch{display:grid; gap:14px; margin-top:36px}
+  .arch-row{display:flex; gap:12px; flex-wrap:wrap; align-items:stretch}
+  .node{flex:1; min-width:150px; background:var(--bg-white); border:1px solid var(--border);
+    border-left:3px solid var(--blue-500); border-radius:var(--r-sm); padding:15px 17px; box-shadow:var(--sh-sm)}
+  .node .nt{font-weight:700; font-size:14.5px}
+  .node .nd{font-size:12.5px; color:var(--text-s); margin-top:4px; line-height:1.5}
+  .node.alt{border-left-color:var(--blue-400)}
+  .node.ai{border-left-color:#7C4DBE}
+  .arch-label{font-family:'JetBrains Mono',monospace; font-size:11.5px; letter-spacing:.1em;
+    text-transform:uppercase; color:var(--text-t); margin:8px 0 2px}
+  .arrow-down{text-align:center; color:var(--blue-400); font-size:19px; line-height:1}
+
+  /* score bars */
+  .bars{display:flex; flex-direction:column; gap:11px; margin-top:8px}
+  .bar{display:grid; grid-template-columns:96px 1fr 42px; gap:12px; align-items:center}
+  .bar .bl{font-size:14px; font-weight:600}
+  .track{height:11px; background:var(--blue-50); border-radius:var(--pill); overflow:hidden}
+  .fill{height:100%; background:linear-gradient(90deg,var(--blue-400),var(--blue-600)); border-radius:var(--pill)}
+  .bar .bv{font-size:13px; color:var(--text-t); text-align:right; font-family:'JetBrains Mono',monospace}
+
+  /* chips + code */
+  .chips{display:flex; flex-wrap:wrap; gap:8px; margin-top:16px}
+  .chip{border-radius:var(--pill); padding:6px 14px; font-size:13.5px; font-weight:600;
+    background:var(--bg-white); border:1px solid var(--border); color:var(--text-s)}
+  .src{border-radius:var(--pill); padding:6px 14px; font-size:13px; font-weight:700; color:#fff}
+  .src.li{background:#3B6FE0}.src.ss{background:#1A7A3A}.src.xi{background:#0D6856}.src.ar{background:#C0392B}
+  pre{background:#171A21; color:#E4E8F0; border-radius:var(--r-sm); padding:20px 22px; overflow-x:auto;
+    font-family:'JetBrains Mono',monospace; font-size:13.5px; line-height:1.75}
+  pre .c{color:#7F8CA3}
+  pre .g{color:#7FD1A6}
+
+  /* gallery */
+  .gal{display:grid; grid-template-columns:1fr 1fr; gap:20px; margin-top:36px}
+  @media (max-width:760px){ .gal{grid-template-columns:1fr} }
+  .gal figure{background:var(--bg-white); border:1px solid var(--border); border-radius:var(--r-sm);
+    overflow:hidden; box-shadow:var(--sh-sm)}
+  .gal figcaption{padding:13px 16px; font-size:13.5px; color:var(--text-s); border-top:1px solid var(--border)}
+
+  /* timeline */
+  .tl{margin-top:36px; display:grid; gap:0}
+  .tl-item{display:grid; grid-template-columns:118px 1fr; gap:20px; padding:20px 0; border-top:1px solid var(--border)}
+  .tl-item:first-child{border-top:none}
+  .tl-s{font-family:'JetBrains Mono',monospace; font-size:12.5px; font-weight:600; color:var(--blue-600);
+    background:var(--blue-50); border-radius:var(--pill); padding:5px 12px; height:fit-content; text-align:center}
+  .tl-t{font-weight:700; font-size:15.5px}
+  .tl-d{font-size:14.5px; color:var(--text-s); margin-top:4px}
+  @media (max-width:600px){ .tl-item{grid-template-columns:1fr; gap:8px} .tl-s{justify-self:start} }
+
+  .callout{border-left:3px solid var(--green); background:var(--green-bg); border-radius:var(--r-sm); padding:20px 24px; margin-top:26px}
+  .callout strong{color:var(--green)}
+  .callout p{color:#2C5A3C; font-size:15px}
+
+  footer{background:var(--text); color:#A9B1C2; padding:56px 0 44px; font-size:14.5px}
+  footer a{color:var(--blue-400); text-decoration:none}
+  footer a:hover{text-decoration:underline}
+  .foot-grid{display:grid; grid-template-columns:1.4fr 1fr 1fr; gap:32px}
+  @media (max-width:760px){ .foot-grid{grid-template-columns:1fr; gap:24px} }
+  .foot-h{color:#fff; font-weight:700; font-size:14px; margin-bottom:10px}
+  .foot-links{display:flex; flex-direction:column; gap:7px}
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="nav-in">
+    <a class="brand" href="#top">keinplan<b>karriere</b></a>
+    <div class="nav-links">
+      <a href="#how">How it works</a>
+      <a href="#walkthrough">Walkthrough</a>
+      <a href="#engine">Matching engine</a>
+      <a href="#try">Try it</a>
+      <a class="btn btn-ghost btn-sm" href="https://github.com/Aminebenbelaid/KPK-agent" target="_blank" rel="noreferrer">GitHub</a>
+    </div>
+  </div>
+</nav>
+
+<!-- ─────────── HERO ─────────── -->
+<header class="wrap hero" id="top">
+  <div class="hero-grid">
+    <div>
+      <div class="eyebrow">AI Agents · Westfälische Hochschule</div>
+      <h1>The job hunt,<br>minus the <span class="lead">busywork</span></h1>
+      <p class="tagline">
+        <b>KeinplanKarriere</b> is an AI agent for the German tech job market. It gathers postings from four
+        job boards, ranks each one against <i>your real experience</i> with an explainable score, and drafts a
+        tailored CV and cover letter for the ones worth your time.
+      </p>
+      <div class="hero-cta">
+        <a class="btn btn-primary" href="__DEMO_URL__" target="_blank" rel="noreferrer">Try the live demo →</a>
+        <a class="btn btn-ghost" href="https://github.com/Aminebenbelaid/KPK-agent" target="_blank" rel="noreferrer">Code on GitHub</a>
+        <a class="btn btn-ghost" href="./KeinplanKarriere-Pitch.pdf" target="_blank">Pitch deck (PDF)</a>
+      </div>
+      <p class="hero-note">
+        It prepares the application — <b>you</b> press submit. This is not an auto-apply bot
+        (<a href="#control">why that matters</a>).
+      </p>
+    </div>
+    <div class="frame">
+      <div class="frame-bar">
+        <span class="dot" style="background:#FF5F57"></span>
+        <span class="dot" style="background:#FEBC2E"></span>
+        <span class="dot" style="background:#28C840"></span>
+        <span class="frame-url">keinplankarriere · your job dashboard</span>
+      </div>
+      <img src="./assets/01-jobs.png" alt="The KeinplanKarriere dashboard showing 138 tracked jobs with match scores and application statuses" />
+    </div>
+  </div>
+
+  <div class="stats">
+    <div class="stat"><div class="n">4 boards</div><div class="l">LinkedIn, StepStone, Xing, Arbeitsagentur — with full job descriptions</div></div>
+    <div class="stat"><div class="n">0–100</div><div class="l">explainable match score, every component visible</div></div>
+    <div class="stat"><div class="n">2 PDFs</div><div class="l">tailored CV + cover letter per job, one click</div></div>
+    <div class="stat"><div class="n">Your key</div><div class="l">bring your own LLM provider — no shared credentials</div></div>
+  </div>
+</header>
+
+<!-- ─────────── PROBLEM ─────────── -->
+<section class="wrap" id="problem">
+  <div class="eyebrow">The problem</div>
+  <h2>Applying for jobs is a <span class="lead">second job</span></h2>
+  <p class="sec-sub">Anyone who has job-hunted in Germany knows the drill. Three things make it exhausting — and all three are automatable without taking a human out of the loop.</p>
+  <div class="grid g3">
+    <div class="pain">
+      <h3>Fragmented</h3>
+      <p>The same role is posted on LinkedIn, StepStone, Xing and the Arbeitsagentur — so you search four sites and read the same job four times.</p>
+    </div>
+    <div class="pain">
+      <h3>Repetitive</h3>
+      <p>Every serious application means rewriting your CV and cover letter for that specific posting. 30–60 minutes, each time.</p>
+    </div>
+    <div class="pain">
+      <h3>No feedback</h3>
+      <p>You never find out which skills the market actually wants, or which kind of application got you a reply.</p>
+    </div>
+  </div>
+  <p style="margin-top:26px; font-size:16px">
+    The usual outcomes are both bad: fire off generic applications everywhere, or burn out perfecting three.
+  </p>
+</section>
+
+<!-- ─────────── WHAT IT DOES ─────────── -->
+<section class="band"><div class="wrap" id="how">
+  <div class="eyebrow">What it does</div>
+  <h2>One agent, the <span class="lead">whole loop</span></h2>
+  <p class="sec-sub">Four stages. Each one is useful on its own, and each feeds the next.</p>
+  <div class="grid g4">
+    <div class="card">
+      <div class="icon">01</div>
+      <h3>Find</h3>
+      <p>Search once from the dashboard; it queries four boards in parallel, pulls the <b>full description</b> of every posting, tags the skills, and merges duplicates across boards into one entry.</p>
+    </div>
+    <div class="card">
+      <div class="icon">02</div>
+      <h3>Match</h3>
+      <p>Every job gets a 0–100 score against your experience and preferences, with the breakdown shown. The strongest candidates get a second, AI-written verdict that explains itself.</p>
+    </div>
+    <div class="card">
+      <div class="icon">03</div>
+      <h3>Apply</h3>
+      <p>One click builds a CV rewritten for that job — keeping all your experience, rephrased to the posting — plus a matching cover letter, both as compiled PDFs, with the apply link and a checklist.</p>
+    </div>
+    <div class="card">
+      <div class="icon">04</div>
+      <h3>Improve</h3>
+      <p>Mark a job as interview or offer and the agent learns: jobs sharing those skills rise in the ranking, and the AI scorer is told what has been working for you.</p>
+    </div>
+  </div>
+  <div class="callout">
+    <p><strong>Grounded in you, not invented.</strong> You upload your CV once; the AI parses it into a reviewed
+      <i>experience base</i> — and you confirm every entry before it is saved. Every score and every generated
+      document is built from that. The agent never invents an employer, a date or a technology you don't have.</p>
+  </div>
+</div></section>
+
+<!-- ─────────── WALKTHROUGH ─────────── -->
+<section class="wrap" id="walkthrough">
+  <div class="eyebrow">Product walkthrough</div>
+  <h2>See it work, <span class="lead">step by step</span></h2>
+  <p class="sec-sub">Real screens from the running app. It advances on its own — or click a step to jump.</p>
+
+  <div class="wt">
+    <div>
+      <div class="wt-steps" id="wt-steps"></div>
+      <div class="wt-bar"><div class="wt-fill" id="wt-fill"></div></div>
+      <div class="wt-ctrl">
+        <button id="wt-prev" aria-label="Previous step">‹</button>
+        <button id="wt-play" aria-label="Pause or play">❚❚</button>
+        <button id="wt-next" aria-label="Next step">›</button>
+        <span class="wt-count" id="wt-count">1 / 5</span>
+      </div>
+    </div>
+    <div class="wt-stage">
+      <div class="frame">
+        <div class="frame-bar">
+          <span class="dot" style="background:#FF5F57"></span>
+          <span class="dot" style="background:#FEBC2E"></span>
+          <span class="dot" style="background:#28C840"></span>
+          <span class="frame-url" id="wt-url">keinplankarriere</span>
+        </div>
+        <img id="wt-img" src="./assets/04-experience.png" alt="Product walkthrough screenshot" />
+      </div>
+      <p class="wt-cap" id="wt-cap"></p>
+    </div>
+  </div>
+</section>
+
+<!-- ─────────── NOT AUTO-APPLY ─────────── -->
+<section class="dark-band"><div class="wrap" id="control">
+  <div class="eyebrow">A deliberate design choice</div>
+  <h2>An assistant, <span style="color:var(--blue-400)">not an auto-apply bot</span></h2>
+  <p class="sec-sub">This was the hardest product decision in the project, and the answer shaped the whole apply flow.</p>
+  <div class="grid g3">
+    <div class="dcard">
+      <h3>Why not automate submission?</h3>
+      <p>Auto-submitting to job boards violates their terms of service, requires storing your login credentials, and breaks the moment a form or bot-check changes.</p>
+    </div>
+    <div class="dcard">
+      <h3>It also fails you</h3>
+      <p>An application sent without a human read is exactly the low-effort spam that recruiters filter out. Volume is not the bottleneck — quality per application is.</p>
+    </div>
+    <div class="dcard">
+      <h3>What we built instead</h3>
+      <p>The <b>Apply Assistant</b>: tailored CV, cover letter, the posting link and a pre-submit checklist, prepared in one click. You review and send in seconds — with full control over what goes out.</p>
+    </div>
+  </div>
+  <p style="margin-top:28px; color:#A9B1C2; font-size:15.5px">
+    Same time saved. None of the risk — and nothing leaves your hands without you seeing it.
+  </p>
+</div></section>
+
+<!-- ─────────── MATCHING ENGINE ─────────── -->
+<section class="wrap" id="engine">
+  <div class="eyebrow">Under the hood</div>
+  <h2>How the <span class="lead">matching engine</span> works</h2>
+  <p class="sec-sub">Deliberately hybrid: cheap deterministic logic does the bulk of the work, and the language model is reserved for genuine judgment.</p>
+
+  <div class="grid g2">
+    <div class="card">
+      <h3>Layer 1 — rule-based score (every job)</h3>
+      <p style="margin-bottom:16px">Instant, free and reproducible. Weighted components, always visible in the UI:</p>
+      <div class="bars">
+        <div class="bar"><span class="bl">Skills</span><div class="track"><div class="fill" style="width:100%"></div></div><span class="bv">45</span></div>
+        <div class="bar"><span class="bl">Role</span><div class="track"><div class="fill" style="width:44%"></div></div><span class="bv">20</span></div>
+        <div class="bar"><span class="bl">Location</span><div class="track"><div class="fill" style="width:22%"></div></div><span class="bv">10</span></div>
+        <div class="bar"><span class="bl">Remote</span><div class="track"><div class="fill" style="width:22%"></div></div><span class="bv">10</span></div>
+        <div class="bar"><span class="bl">Seniority</span><div class="track"><div class="fill" style="width:22%"></div></div><span class="bv">10</span></div>
+        <div class="bar"><span class="bl">Salary</span><div class="track"><div class="fill" style="width:11%"></div></div><span class="bv">5</span></div>
+      </div>
+      <p style="margin-top:16px; font-size:14px"><i>Skills</i> measures the share of the <b>job's</b> requirements you cover — so adding experience can only ever raise a score, never lower it.</p>
+    </div>
+    <div class="card tint">
+      <h3>Layer 2 — AI refinement (top candidates only)</h3>
+      <p>The best rule-scored jobs go to the language model, which reads the posting <i>and</i> your actual experiences, re-scores 0–100, and writes a one-line justification you can argue with.</p>
+      <p style="margin-top:14px"><b>Cost control:</b> each score is fingerprinted from its inputs. Re-running a scoring pass reuses cached verdicts for unchanged jobs — a repeat run costs zero API calls.</p>
+      <p style="margin-top:14px"><b>Resilience:</b> if the model provider retires or fails a model mid-request, selection re-resolves against the live catalogue and retries; if the AI is unavailable, the rule score still stands.</p>
+    </div>
+  </div>
+
+  <div class="grid g3" style="margin-top:20px">
+    <div class="card">
+      <h3>Skill extraction</h3>
+      <p>A curated taxonomy of ~70 technologies with their aliases (React / ReactJS / React.js → one skill), matched with word-boundary regexes so “Java” never matches inside “JavaScript”. German and English.</p>
+    </div>
+    <div class="card">
+      <h3>Cross-board deduplication</h3>
+      <p>Titles and companies are normalised (gender markers like <span class="mono">(m/w/d)</span>, legal suffixes, punctuation stripped) then compared with <span class="mono">difflib</span> similarity. Above threshold, entries merge and record “also on”.</p>
+    </div>
+    <div class="card">
+      <h3>Document generation</h3>
+      <p>Your LaTeX résumé is rewritten per job, then compiled to PDF with Tectonic. If a tailored version fails to compile, it retries, then falls back to your known-good template — you always get a valid PDF.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ─────────── ARCHITECTURE ─────────── -->
+<section class="band"><div class="wrap" id="architecture">
+  <div class="eyebrow">Architecture</div>
+  <h2>How the system is <span class="lead">put together</span></h2>
+  <p class="sec-sub">One Docker image: a FastAPI backend that also serves the built React dashboard, an embedded SQLite database, and a LaTeX engine for documents.</p>
+
+  <div class="arch">
+    <div class="arch-label">Browser</div>
+    <div class="arch-row">
+      <div class="node"><div class="nt">React dashboard</div><div class="nd">Jobs · Experience · Trends · Settings — served as static files by the API</div></div>
+    </div>
+    <div class="arrow-down">↓ cookie session per visitor</div>
+
+    <div class="arch-label">FastAPI application</div>
+    <div class="arch-row">
+      <div class="node"><div class="nt">REST API</div><div class="nd">jobs, applications, experiences, matching, generation, settings</div></div>
+      <div class="node alt"><div class="nt">Session layer</div><div class="nd">an isolated workspace per browser; idle ones expire automatically</div></div>
+      <div class="node alt"><div class="nt">Work queue</div><div class="nd">one serial worker for all heavy jobs, with live “position in line”</div></div>
+    </div>
+    <div class="arrow-down">↓</div>
+
+    <div class="arch-label">Workers &amp; storage</div>
+    <div class="arch-row">
+      <div class="node"><div class="nt">Scrapers</div><div class="nd">requests + BeautifulSoup per board; official REST API for Arbeitsagentur</div></div>
+      <div class="node"><div class="nt">SQLite</div><div class="nd">jobs, experiences, profiles, settings — all rows scoped to a session</div></div>
+      <div class="node ai"><div class="nt">Tectonic</div><div class="nd">LaTeX → PDF for CVs and cover letters</div></div>
+      <div class="node ai"><div class="nt">LLM provider</div><div class="nd">any OpenAI-compatible API — the visitor's own key</div></div>
+    </div>
+  </div>
+
+  <div class="grid g3" style="margin-top:34px">
+    <div class="card">
+      <h3>A workspace per visitor</h3>
+      <p>Every browser gets its own jobs, experiences, documents and settings, keyed by a cookie. Nothing is shared between visitors, and idle workspaces are purged with their generated files.</p>
+    </div>
+    <div class="card">
+      <h3>Fair-use queue</h3>
+      <p>Scraping, scoring, parsing and document generation all run through a single worker. Several people can use it at once on modest hardware without the machine falling over.</p>
+    </div>
+    <div class="card">
+      <h3>Bring your own AI key</h3>
+      <p>Visitors paste their own LLM key (Groq, OpenRouter, Kisski, …), so no credentials are shared and the host pays nothing. Search, dedup and rule-based ranking work with no key at all.</p>
+    </div>
+  </div>
+</div></section>
+
+<!-- ─────────── SCREENS ─────────── -->
+<section class="wrap" id="screens">
+  <div class="eyebrow">The product</div>
+  <h2>Every screen, <span class="lead">real data</span></h2>
+  <div class="gal">
+    <figure><img src="./assets/02-job-detail.png" alt="Job detail view with score breakdown" loading="lazy" />
+      <figcaption><b>Score breakdown</b> — component-by-component, plus the AI's written verdict and which skills you match or miss.</figcaption></figure>
+    <figure><img src="./assets/03-apply-assistant.png" alt="Apply Assistant with generated CV and cover letter" loading="lazy" />
+      <figcaption><b>Apply Assistant</b> — tailored CV and cover letter as PDFs, the posting link, and a pre-submit checklist.</figcaption></figure>
+    <figure><img src="./assets/04-experience.png" alt="Experience base built from a parsed CV" loading="lazy" />
+      <figcaption><b>Experience base</b> — parsed from your CV (you review before saving) or added by hand; the AI infers type and stack.</figcaption></figure>
+    <figure><img src="./assets/05-trends.png" alt="Market trends analytics" loading="lazy" />
+      <figcaption><b>Market trends</b> — the skills actually in demand across your tracked jobs, salary ranges, remote split and top locations.</figcaption></figure>
+  </div>
+</section>
+
+<!-- ─────────── TRY IT ─────────── -->
+<section class="band"><div class="wrap" id="try">
+  <div class="eyebrow">Try it yourself</div>
+  <h2>Run the whole thing in <span class="lead">one command</span></h2>
+  <p class="sec-sub">Everything ships in a single Docker image — API, dashboard and the LaTeX engine. No local Python, Node or TeX install needed.</p>
+
+  <div class="grid g2">
+    <div>
+      <pre><span class="c"># 1 · clone</span>
+git clone https://github.com/Aminebenbelaid/KPK-agent.git
+cd KPK-agent
+
+<span class="c"># 2 · configure (copy the template, set your keys)</span>
+cp .env.example .env
+
+<span class="c"># 3 · run</span>
+docker compose up -d --build
+
+<span class="c"># 4 · open</span>
+<span class="g">http://localhost:8000</span></pre>
+      <p style="margin-top:16px; font-size:14.5px">
+        First run downloads the LaTeX packages it needs and caches them, so the first CV takes a little longer than the rest.
+      </p>
+    </div>
+    <div class="card tint">
+      <h3>Then, in the app</h3>
+      <ol style="margin-left:18px; display:flex; flex-direction:column; gap:9px; color:var(--text-s); font-size:15px">
+        <li><b>Settings</b> → paste an LLM API key. <a href="https://console.groq.com" target="_blank" rel="noreferrer">Groq</a> is free and works out of the box; OpenRouter, Kisski or any OpenAI-compatible endpoint also work.</li>
+        <li><b>Experience</b> → upload your CV (PDF or LaTeX) and confirm what the AI extracted, or add entries manually.</li>
+        <li><b>Jobs</b> → run a search, then <b>Score all jobs</b>.</li>
+        <li>Open the best match → <b>Prepare application</b> → download your tailored CV and cover letter.</li>
+      </ol>
+      <p style="margin-top:16px; font-size:14px">Without an AI key, search, deduplication and rule-based ranking still work — only the generative features need one.</p>
+    </div>
+  </div>
+</div></section>
+
+<!-- ─────────── HOW IT WAS BUILT ─────────── -->
+<section class="wrap" id="build">
+  <div class="eyebrow">How it was built</div>
+  <h2>Four sprints, <span class="lead">shipped end to end</span></h2>
+  <p class="sec-sub">Each sprint ended with something that ran, not a prototype in a branch.</p>
+  <div class="tl">
+    <div class="tl-item">
+      <div class="tl-s">Sprint 1</div>
+      <div><div class="tl-t">Collect &amp; track</div><div class="tl-d">Four working scrapers, a FastAPI + SQLite backend and the React dashboard. Jobs could be searched, stored and tracked through application statuses. Deployed in Docker from day one.</div></div>
+    </div>
+    <div class="tl-item">
+      <div class="tl-s">Sprint 2</div>
+      <div><div class="tl-t">Matching &amp; profile</div><div class="tl-d">Skill extraction, fuzzy cross-board deduplication, the weighted rule score plus AI refinement, and the experience base parsed from a CV — the point where rankings became personal.</div></div>
+    </div>
+    <div class="tl-item">
+      <div class="tl-s">Sprint 3</div>
+      <div><div class="tl-t">Generation &amp; apply</div><div class="tl-d">Full job descriptions from every board, tailored CV generation, cover letters, the Apply Assistant, market trends, and outcome-based re-ranking with response caching.</div></div>
+    </div>
+    <div class="tl-item">
+      <div class="tl-s">Sprint 4</div>
+      <div><div class="tl-t">Multi-user &amp; public</div><div class="tl-d">Per-visitor sessions, the serial work queue, bring-your-own-LLM-key, CV photo upload, and a public deployment — turning a personal tool into something a stranger can safely use.</div></div>
+    </div>
+  </div>
+
+  <div class="chips" style="margin-top:36px">
+    <span class="chip">Python 3.12</span><span class="chip">FastAPI</span><span class="chip">SQLite</span>
+    <span class="chip">React 18 + Vite</span><span class="chip">BeautifulSoup</span><span class="chip">Tectonic (LaTeX)</span>
+    <span class="chip">Docker Compose</span><span class="chip">OpenAI-compatible LLM</span>
+  </div>
+  <div class="chips" style="margin-top:10px">
+    <span class="src li">LinkedIn</span><span class="src ss">StepStone</span><span class="src xi">Xing</span><span class="src ar">Arbeitsagentur</span>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap foot-grid">
+    <div>
+      <div class="brand" style="color:#fff; font-size:18px">keinplan<b style="color:var(--blue-400)">karriere</b></div>
+      <p style="margin-top:12px; max-width:38ch; color:#A9B1C2">
+        An AI career agent that makes applying easier — it prepares, you decide.
+        Built as a student project for the AI Agents course at Westfälische Hochschule.
+      </p>
+    </div>
+    <div>
+      <div class="foot-h">Project</div>
+      <div class="foot-links">
+        <a href="__DEMO_URL__" target="_blank" rel="noreferrer">Live demo</a>
+        <a href="https://github.com/Aminebenbelaid/KPK-agent" target="_blank" rel="noreferrer">Code repository</a>
+        <a href="./KeinplanKarriere-Pitch.pdf" target="_blank">Pitch deck (PDF)</a>
+        <a href="https://github.com/Aminebenbelaid/KPK-agent#readme" target="_blank" rel="noreferrer">Setup instructions</a>
+      </div>
+    </div>
+    <div>
+      <div class="foot-h">On this page</div>
+      <div class="foot-links">
+        <a href="#how">What it does</a>
+        <a href="#walkthrough">Walkthrough</a>
+        <a href="#engine">Matching engine</a>
+        <a href="#architecture">Architecture</a>
+        <a href="#try">Run it yourself</a>
+      </div>
+    </div>
+  </div>
+</footer>
+
+<script>
+  // ── self-running product walkthrough ──
+  const STEPS = [
+    { img: '01-jobs',          url: 'keinplankarriere / jobs',
+      t: 'Search four boards at once',
+      d: 'One query, four job boards in parallel.',
+      cap: 'Type a role and a location, pick your sources and hit Search. The agent queries LinkedIn, StepStone, Xing and the Arbeitsagentur, pulls the full description of every posting, tags the skills it finds and merges duplicates — so what lands in your list is one clean entry per job.' },
+    { img: '04-experience',    url: 'keinplankarriere / experience',
+      t: 'Teach it who you are',
+      d: 'Upload a CV; confirm what the AI found.',
+      cap: 'Upload your CV as PDF or LaTeX and the AI turns it into structured experiences — role, organisation, stack, dates, a summary — which you review and edit before anything is saved. You can also add entries by hand and let the AI infer the type and technologies.' },
+    { img: '02-job-detail',    url: 'keinplankarriere / job detail',
+      t: 'See why a job scores',
+      d: 'Component breakdown plus an AI verdict.',
+      cap: 'Every job carries a 0–100 score you can interrogate: how many points came from skills, role, location, remote, seniority and salary, which of the job’s required skills you match or miss — and for top candidates, a written verdict from the language model.' },
+    { img: '03-apply-assistant', url: 'keinplankarriere / apply assistant',
+      t: 'Prepare the application',
+      d: 'Tailored CV + cover letter, one click.',
+      cap: 'One click rewrites your résumé for this posting — every experience kept, the wording pointed at what this employer asked for — writes a matching cover letter, compiles both to PDF, and hands you the apply link with a checklist. You submit.' },
+    { img: '05-trends',        url: 'keinplankarriere / trends',
+      t: 'Learn from the market',
+      d: 'What is actually in demand right now.',
+      cap: 'Because every posting is parsed and structured, the Trends view falls out for free: the most requested skills across your tracked jobs, salary ranges where they are published, the remote/hybrid/on-site split, and the busiest locations and employers.' },
+  ];
+
+  const DUR = 6000;
+  let idx = 0, playing = true, t0 = 0, raf = null;
+
+  const elSteps = document.getElementById('wt-steps');
+  const elImg   = document.getElementById('wt-img');
+  const elCap   = document.getElementById('wt-cap');
+  const elUrl   = document.getElementById('wt-url');
+  const elFill  = document.getElementById('wt-fill');
+  const elCount = document.getElementById('wt-count');
+  const elPlay  = document.getElementById('wt-play');
+
+  STEPS.forEach((s, i) => {
+    const b = document.createElement('button');
+    b.className = 'wt-step' + (i === 0 ? ' on' : '');
+    b.innerHTML = '<span class="wt-num">' + (i + 1) + '</span><span><span class="wt-t">' +
+                  s.t + '</span><span class="wt-d">' + s.d + '</span></span>';
+    b.addEventListener('click', () => { go(i); });
+    elSteps.appendChild(b);
+  });
+  const btns = [...elSteps.children];
+
+  function render() {
+    const s = STEPS[idx];
+    elImg.style.opacity = 0;
+    setTimeout(() => {
+      elImg.src = './assets/' + s.img + '.png';
+      elImg.style.opacity = 1;
+    }, 180);
+    elCap.textContent = s.cap;
+    elUrl.textContent = s.url;
+    elCount.textContent = (idx + 1) + ' / ' + STEPS.length;
+    btns.forEach((b, i) => b.classList.toggle('on', i === idx));
+  }
+  function go(i, resume = true) {
+    idx = (i + STEPS.length) % STEPS.length;
+    t0 = performance.now();
+    render();
+    if (resume) { playing = true; elPlay.textContent = '❚❚'; }
+  }
+  function tick(now) {
+    if (playing) {
+      const p = Math.min(1, (now - t0) / DUR);
+      elFill.style.width = (p * 100) + '%';
+      if (p >= 1) go(idx + 1);
+    }
+    raf = requestAnimationFrame(tick);
+  }
+
+  document.getElementById('wt-next').addEventListener('click', () => go(idx + 1));
+  document.getElementById('wt-prev').addEventListener('click', () => go(idx - 1));
+  elPlay.addEventListener('click', () => {
+    playing = !playing;
+    elPlay.textContent = playing ? '❚❚' : '▶';
+    if (playing) t0 = performance.now();
+  });
+
+  render();
+  // only animate while the walkthrough is on screen
+  const sect = document.getElementById('walkthrough');
+  new IntersectionObserver((es) => {
+    es.forEach((e) => {
+      if (e.isIntersecting) { if (!raf) { t0 = performance.now(); raf = requestAnimationFrame(tick); } }
+      else if (raf) { cancelAnimationFrame(raf); raf = null; }
+    });
+  }, { threshold: .25 }).observe(sect);
+</script>
+</body>
+</html>

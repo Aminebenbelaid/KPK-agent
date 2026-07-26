@@ -1,99 +1,196 @@
 # KeinplanKarriere
 
-> AI-assisted job search for the German market: scrape postings, match them against your real experience, generate a tailored CV + cover letter per job — now public and multi-user.
+> An AI career agent for the German tech job market. It collects postings from four job boards,
+> ranks each one against **your real experience** with an explainable 0–100 score, and drafts a
+> tailored CV and cover letter for the ones worth your time.
+>
+> It prepares the application — **you** press submit. This is not an auto-apply bot.
 
-**Try it:** [https://keinplankarriere.qantra.dev](https://keinplankarriere.qantra.dev) · every visitor gets their own private workspace
+**🌐 Project website:** https://aminebenbelaid.github.io/KPK-agent/
+**🚀 Live demo:** __DEMO_URL__
+**📄 Pitch deck:** [`docs/KeinplanKarriere-Pitch.pdf`](docs/KeinplanKarriere-Pitch.pdf)
+
+![The KeinplanKarriere dashboard](docs/assets/01-jobs.png)
+
+---
+
+## Table of contents
+
+- [What it does](#what-it-does)
+- [Product walkthrough](#product-walkthrough)
+- [Quick start (Docker)](#quick-start-docker)
+- [Configuration](#configuration)
+- [Architecture](#architecture)
+- [How the matching engine works](#how-the-matching-engine-works)
+- [Project structure](#project-structure)
+- [API reference](#api-reference)
+- [Local development](#local-development)
+- [Development history](#development-history)
 
 ---
 
 ## What it does
 
-1. **Scrapes** job postings (with full descriptions) from four German job boards.
-2. **Matches** each job against your experience and preferences with a hybrid rule + LLM engine.
-3. **Builds an experience base** from your CV (AI-parsed, human-reviewed) or manual entries.
-4. **Generates a tailored CV and cover letter** (LaTeX → PDF) for any job, bundled into a one-click Apply Assistant.
-5. **Learns from outcomes** — interviews/offers boost the ranking of similar jobs.
+| Stage | What happens |
+|-------|--------------|
+| **Find** | One search queries LinkedIn, StepStone, Xing and the Arbeitsagentur in parallel, fetches the **full description** of every posting, extracts the skills, and merges cross-board duplicates into a single entry. |
+| **Match** | Every job gets a 0–100 score against your experience and preferences, with the component breakdown visible. Top candidates get an AI verdict that explains itself. |
+| **Apply** | One click produces a CV rewritten for that job (all experience kept, wording pointed at the posting) plus a matching cover letter — both compiled to PDF — with the apply link and a checklist. |
+| **Improve** | Marking a job as *interview* or *offer* creates a success signal: jobs sharing those skills rise in the ranking, and the AI scorer is told what has been working. |
 
 ### Supported job boards
 
-| Platform | Method | Descriptions |
-|----------|--------|--------------|
-| **LinkedIn** | Guest search + `jobPosting` detail API | ✅ |
-| **StepStone** | HTML search + JSON-LD detail | ✅ |
-| **Xing** | HTML search + JSON-LD detail | ✅ |
-| **Arbeitsagentur** | Official REST API | ✅ |
+| Platform | Method | Full descriptions |
+|----------|--------|-------------------|
+| **LinkedIn** | Guest search + `jobPosting` detail endpoint | ✅ |
+| **StepStone** | HTML search + JSON-LD on the detail page | ✅ |
+| **Xing** | HTML search + JSON-LD on the detail page | ✅ |
+| **Arbeitsagentur** | Official public REST API | ✅ |
 
 ---
 
-## Multi-user architecture (final sprint)
+## Product walkthrough
 
-```
-            Internet ──► Cloudflare Tunnel (keinplankarriere.qantra.dev)
-                              │
-                    ┌─────────┴──────────┐
-                    │   FastAPI + React    │  cookie session per visitor
-                    │  ┌───────────────┐  │
-                    │  │  Work queue    │  │  ONE worker: scrape/score/
-                    │  │  (serial)      │  │  generate run in line
-                    │  └───────────────┘  │
-                    │  SQLite (per-session │
-                    │  scoped rows)        │
-                    └─────────┬──────────┘
-                              │
-                     Tectonic · Kisski LLM
-```
+The [project website](https://aminebenbelaid.github.io/KPK-agent/#walkthrough) contains a
+self-running, five-step walkthrough of the product using real screens from the running app.
 
-- **Sessions** — each browser gets an isolated workspace (jobs, experiences, profile, prompt add-ons, CV template, photo, PDFs). Idle visitor sessions auto-purge after 48 h.
-- **Owner workspace** — the pre-existing data sits behind an admin key (Settings → Admin access). Only the owner sees/edits server LLM credentials; visitors never can.
-- **Work queue** — all heavy operations run through a single serial worker with live queue positions in the UI, so many visitors can't overload the host.
-- **Caps** — 400 jobs / 60 experiences per session, upload size limits.
+| | |
+|---|---|
+| ![Score breakdown](docs/assets/02-job-detail.png) | ![Apply Assistant](docs/assets/03-apply-assistant.png) |
+| **Score breakdown** — every component, plus which of the job's skills you match or miss. | **Apply Assistant** — tailored CV + cover letter as PDFs, apply link, checklist. |
+| ![Experience base](docs/assets/04-experience.png) | ![Market trends](docs/assets/05-trends.png) |
+| **Experience base** — parsed from your CV, reviewed by you before saving. | **Market trends** — in-demand skills, salary ranges, remote split, top locations. |
 
 ---
 
-## Features
+## Quick start (Docker)
 
-### Jobs
-- Dashboard-triggered scraping with custom query + location (parallel across sources)
-- Full descriptions, skill extraction (taxonomy + word-boundary regex), fuzzy cross-source dedup
-- Filter / sort / search, status tracking, one-click Clear all
-
-### Matching (hybrid)
-- Rule score 0–100: skills 45 · role 20 · location 10 · remote 10 · seniority 10 · salary 5
-- LLM refinement of top candidates, grounded in real experiences, with written explanations
-- Per-job "best experiences to highlight", re-ranking from past interview/offer outcomes
-- Input-hash caching: unchanged jobs reuse their LLM verdict (zero-cost re-runs)
-
-### Documents
-- **Tailored CV**: keeps every experience, reformulates bullets to the job; compile-validated with fallback
-- **Cover letter**: grounded, per-job, PDF
-- **Apply Assistant**: CV + letter + apply link + checklist (deliberately *not* auto-submit)
-- **CV photo** upload in Settings (rendered into the CV); per-user prompt add-ons for CV & letter
-
-### Insight
-- **Trends tab**: in-demand skills, salary ranges, remote split, top locations/companies + LLM summary
-
----
-
-## Quick start (self-host)
+Everything ships in one image — API, dashboard and the LaTeX engine. No local Python, Node or TeX needed.
 
 ```bash
-git clone <repo-url> KeinplanKarriere && cd KeinplanKarriere
-cp .env.example .env         # set ADMIN_KEY, KISSKI_API_KEY, INTERNAL_API_KEY
+# 1 · clone
+git clone https://github.com/Aminebenbelaid/KPK-agent.git
+cd KPK-agent
+
+# 2 · configure
+cp .env.example .env      # then edit: ADMIN_KEY (required), keys optional
+
+# 3 · run
 docker compose up -d --build
+
+# 4 · open
 open http://localhost:8000
 ```
 
-The `cloudflared` compose service exposes the app publicly — put your tunnel credentials
-in `~/.cloudflared/` and adjust `kpk-config.yml` (or remove the service for LAN-only use).
+Then, in the app:
 
-### Local development
+1. **Settings** → paste an LLM API key. [Groq](https://console.groq.com) is free and works out of the
+   box; OpenRouter, Kisski or any OpenAI-compatible endpoint also work.
+2. **Experience** → upload your CV (PDF or LaTeX) and confirm what the AI extracted, or add entries by hand.
+3. **Jobs** → run a search, then **Score all jobs**.
+4. Open the best match → **Prepare application** → download the tailored CV and cover letter.
+
+> Without an AI key, search, deduplication and rule-based ranking still work — only the
+> generative features (CV parsing, tailoring, cover letters, AI refinement) require one.
+
+**Useful commands**
 
 ```bash
-python -m venv venv && source venv/bin/activate
-pip install -r requirements.txt
-uvicorn src.main:app --reload --port 8000
-cd dashboard && npm install && npm run dev   # :3000, proxies /api → :8000
+docker compose logs -f kpk        # follow application logs
+docker compose down               # stop (data survives in the kpk-data volume)
+docker compose down -v            # stop and delete all data
 ```
+
+The included `cloudflared` service can expose the app publicly over a Cloudflare Tunnel.
+Remove that service from `docker-compose.yml` for a purely local install.
+
+---
+
+## Configuration
+
+Environment variables (see `.env.example`):
+
+| Variable | Purpose |
+|----------|---------|
+| `ADMIN_KEY` | Unlocks the owner workspace (Settings → Admin access) and the server-wide LLM settings. |
+| `KISSKI_API_KEY` | Optional server-side LLM key, used **only** by the owner workspace. |
+| `INTERNAL_API_KEY` | Shared secret the scrapers use to submit jobs to the API. |
+| `TUNNEL_TOKEN` | Cloudflare Tunnel token, if you use the `cloudflared` service. |
+
+In-app settings, per workspace (Settings tab):
+
+- **Your LLM API key / base URL / model** — each visitor brings their own provider.
+- **CV prompt add-ons** and **Cover letter prompt add-ons** — free-text guidance applied on every generation.
+- **CV photo** — rendered into the top-right of the generated CV.
+
+---
+
+## Architecture
+
+```
+                Internet ──► (optional) Cloudflare Tunnel
+                                  │
+                    ┌─────────────┴──────────────┐
+                    │      FastAPI application    │
+                    │  · REST API (/api/*)        │
+                    │  · serves the React build   │
+                    │  · cookie session/visitor   │
+                    │  ┌───────────────────────┐  │
+                    │  │  serial work queue    │  │  scrape · score · generate
+                    │  └───────────────────────┘  │
+                    └───┬─────────┬──────────┬────┘
+                        │         │          │
+                   ┌────┴───┐ ┌───┴────┐ ┌───┴──────────┐
+                   │Scrapers│ │ SQLite │ │ Tectonic     │
+                   │4 boards│ │per-sess│ │ LaTeX → PDF  │
+                   └────────┘ └────────┘ └──────────────┘
+                                  │
+                        OpenAI-compatible LLM (visitor's key)
+```
+
+**Multi-user design**
+
+- **Session per visitor** — every browser gets an isolated workspace (jobs, experiences, profile,
+  prompt add-ons, CV template, photo, generated PDFs), keyed by a cookie. Idle visitor
+  workspaces are purged with their files after 48 h.
+- **Owner workspace** — pre-existing data lives behind `ADMIN_KEY`; only the owner can see or edit
+  the server-wide LLM credentials.
+- **Serial work queue** — all expensive operations run one at a time, with the queue position shown
+  in the UI, so several visitors cannot overload a small host.
+- **Caps** — 400 jobs and 60 experiences per workspace, plus upload size limits.
+
+---
+
+## How the matching engine works
+
+**Layer 1 — rule-based, every job.** Deterministic, instant, no API calls:
+
+| Component | Weight | Notes |
+|-----------|--------|-------|
+| Skills | 45 | Share of the **job's** required skills you cover — more experience can only help |
+| Target role | 20 | Token overlap between your target roles and the job title |
+| Location | 10 | Your preferred region vs the posting (remote counts as a match) |
+| Remote type | 10 | remote / hybrid / on-site preference |
+| Seniority | 10 | Years of experience vs the level inferred from the posting |
+| Salary | 5 | Against your floor, where the posting publishes a range |
+
+**Layer 2 — AI refinement, top candidates only.** The language model reads the posting and your
+actual experiences, re-scores 0–100 and writes a short justification.
+
+- **Caching** — each score is fingerprinted from its inputs; re-running a pass reuses cached
+  verdicts for unchanged jobs (a repeat run costs zero API calls).
+- **Self-healing model choice** — if the provider retires or fails a model mid-request, selection
+  re-resolves against the live catalogue and retries.
+- **Re-ranking** — skills from positively-answered applications boost similar jobs.
+
+**Supporting pieces**
+
+- **Skill extraction** — ~70 canonical skills with aliases (React / ReactJS / React.js → one),
+  word-boundary regexes so `Java` never matches inside `JavaScript`. German + English.
+- **Deduplication** — titles/companies normalised (gender markers `(m/w/d)`, legal suffixes,
+  punctuation removed) and compared with `difflib` similarity; matches merge and record “also on”.
+- **Document generation** — LaTeX rewritten per job and compiled with Tectonic; on a compile
+  failure it repairs once, then falls back to your known-good template.
 
 ---
 
@@ -101,27 +198,108 @@ cd dashboard && npm install && npm run dev   # :3000, proxies /api → :8000
 
 ```
 ├── src/
-│   ├── main.py            # app factory, session middleware
-│   ├── sessions.py        # per-visitor workspaces, owner claim, cleanup
-│   ├── task_queue.py      # global serial worker for heavy ops
-│   ├── init_db.py         # schema + migrations (session scoping)
-│   ├── api/routes/        # jobs, applications, experiences, matching,
-│   │                      #   generate, settings, session, internal, health
-│   └── matching/          # skills, dedup, scorer, llm, cv, cvgen,
-│                          #   coverletter, report, rerank
-├── scrapers/              # linkedin, stepstone, xing, arbeitsagentur
-├── cv_template/           # generic LaTeX resume (per-session overrides live in data/)
-├── dashboard/             # React + Vite frontend
-├── presentation/          # sprint decks (HTML)
-└── docker-compose.yml     # app + cloudflared tunnel
+│   ├── main.py             # app factory, session middleware, static serving
+│   ├── sessions.py         # per-visitor workspaces, owner claim, cleanup
+│   ├── task_queue.py       # global serial worker for heavy operations
+│   ├── init_db.py          # schema creation + migrations
+│   ├── database.py         # SQLite helper (JSON column handling)
+│   ├── config.py           # pydantic-settings configuration
+│   ├── api/routes/         # health, jobs, applications, profile, experiences,
+│   │                       #   matching, generate, settings, session, internal
+│   └── matching/
+│       ├── skills.py       # skill taxonomy + extraction
+│       ├── dedup.py        # fuzzy cross-board deduplication
+│       ├── scorer.py       # weighted rule-based scoring
+│       ├── rerank.py       # outcome-based re-ranking
+│       ├── llm.py          # provider-agnostic LLM layer (per-session credentials)
+│       ├── cv.py           # CV parsing + experience↔job matching
+│       ├── cvgen.py        # tailored CV generation (LaTeX → PDF)
+│       ├── coverletter.py  # cover letter generation
+│       └── report.py       # market trend aggregation
+├── scrapers/               # linkedin, stepstone, xing, arbeitsagentur, base, run_all
+├── cv_template/            # generic LaTeX résumé (per-session overrides live in data/)
+├── dashboard/              # React 18 + Vite frontend
+├── docs/                   # project website (GitHub Pages) + screenshots + deck
+├── presentation/           # sprint decks (HTML) and the screenshot tooling
+├── Dockerfile              # multi-stage: Node build → Python runtime + Tectonic
+└── docker-compose.yml      # application + optional Cloudflare Tunnel
 ```
 
 ---
 
-## Tech stack
+## API reference
 
-Python 3.12 · FastAPI · SQLite · React 18 + Vite · BeautifulSoup · Tectonic (LaTeX) · Cloudflare Tunnel · Kisski LLM (self-healing model selection)
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/health` | Health check + job count for the current workspace |
+| `GET` | `/api/session` | Workspace identity, owner flag, queue state |
+| `POST` | `/api/session/claim` | Unlock the owner workspace with `ADMIN_KEY` |
+| `GET` `DELETE` | `/api/jobs` | List (filter/sort/search) or clear tracked jobs |
+| `POST` | `/api/scrape` | Queue a scraping run; `GET /api/scrape/{id}` to poll |
+| `POST` | `/api/score` | Queue a scoring pass; `GET /api/score` for an overview |
+| `GET` `PUT` | `/api/profile` | Preferences (location, remote, salary, target roles) |
+| `GET` `POST` `PUT` `DELETE` | `/api/experiences` | Experience base CRUD |
+| `POST` | `/api/cv/parse-file` · `/api/cv/parse-text` | Parse a CV into experiences (queued) |
+| `POST` | `/api/cv/tailor/{job_id}` | Generate a tailored CV (queued) |
+| `POST` | `/api/cover-letter/{job_id}` | Generate a cover letter (queued) |
+| `POST` | `/api/apply-kit/{job_id}` | CV + cover letter + apply link + checklist (queued) |
+| `POST` | `/api/match/experiences/{job_id}` | Rank which experiences to highlight (queued) |
+| `GET` | `/api/report` | Market trend report |
+| `GET` | `/api/queue/{task_id}` | Poll any queued task (status + position in line) |
+| `GET` `PUT` | `/api/settings` | Workspace settings (owner also sees server LLM settings) |
+
+Queued endpoints return `{task_id, status, position}`; poll `/api/queue/{task_id}` until
+`status` is `done` (the result is in `result`) or `failed`.
 
 ---
 
-*Built for the AI Agents course at Westfälische Hochschule.*
+## Local development
+
+```bash
+# backend
+python -m venv venv && source venv/bin/activate   # Windows: venv\Scripts\activate
+pip install -r requirements.txt
+uvicorn src.main:app --reload --port 8000
+
+# frontend (second terminal)
+cd dashboard && npm install && npm run dev         # :3000, proxies /api → :8000
+```
+
+CV/cover-letter generation needs the [`tectonic`](https://tectonic-typesetting.github.io/)
+binary on `PATH` (it is installed automatically inside the Docker image).
+
+---
+
+## Development history
+
+Built over four sprints, each ending with a running deployment:
+
+| Sprint | Focus | Delivered |
+|--------|-------|-----------|
+| **1** | Collect & track | Four scrapers, FastAPI + SQLite backend, React dashboard, application status tracking, Docker from day one |
+| **2** | Matching & profile | Skill extraction, fuzzy deduplication, weighted rule score + AI refinement, experience base parsed from a CV |
+| **3** | Generation & apply | Full job descriptions from every board, tailored CVs, cover letters, Apply Assistant, market trends, outcome re-ranking, response caching |
+| **4** | Multi-user & public | Per-visitor sessions, serial work queue, bring-your-own-LLM-key, CV photo upload, public deployment, project website |
+
+Sprint notes: [`SPRINT2.md`](SPRINT2.md) · decks in [`presentation/`](presentation/).
+Full commit history is in this repository.
+
+---
+
+## Design decisions worth knowing
+
+- **No auto-apply.** Submitting applications automatically would breach job-board terms, require
+  storing your credentials, and produce exactly the low-effort applications recruiters filter out.
+  The agent prepares everything; a human sends it.
+- **Deterministic first.** Deduplication, skill extraction and the base score are plain Python —
+  fast, free and reproducible. The LLM is reserved for judgment: reading CVs, refining top
+  matches, and writing documents.
+- **Never fabricate.** Generated documents are grounded strictly in the reviewed experience base;
+  prompts forbid inventing employers, dates, degrees or technologies.
+- **Bring your own key.** Visitors use their own LLM provider, so no credentials are shared and
+  hosting costs nothing.
+
+---
+
+*Built by [Amine Benbelaid](https://github.com/Aminebenbelaid) for the AI Agents course at
+Westfälische Hochschule.*
