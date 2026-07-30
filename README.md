@@ -6,7 +6,7 @@
 >
 > It prepares the application — **you** press submit. This is not an auto-apply bot.
 
-**🌐 Project website:** https://aminebenbelaid.github.io/KPK-agent/ — includes a self-running product walkthrough
+**🌐 Project website:** https://keinplankarriere.qantra.dev/ — includes a self-running product walkthrough
 **▶️ Run it yourself:** [one command with Docker](#quick-start-docker)
 **📄 Pitch deck:** [`docs/KeinplanKarriere-Pitch.pdf`](docs/KeinplanKarriere-Pitch.pdf)
 
@@ -55,7 +55,7 @@
 
 ## Product walkthrough
 
-The [project website](https://aminebenbelaid.github.io/KPK-agent/#walkthrough) contains a
+The [project website](https://keinplankarriere.qantra.dev/#walkthrough) contains a
 self-running, five-step walkthrough of the product using real screens from the running app.
 
 | | |
